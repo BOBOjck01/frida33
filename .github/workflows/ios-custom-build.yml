@@ -29,19 +29,29 @@ jobs:
           brew install meson ninja pkg-config dpkg
           python -m pip install --upgrade pip setuptools wheel
 
-      - name: Patch (Full Stealth)
+      # ✅ 修复后的 Patch（关键）
+      - name: Patch (Stable Stealth)
         run: |
           set -e
+          export LC_ALL=C
+
+          replace() {
+            local from=$1
+            local to=$2
+            grep -rlI "$from" . | while read f; do
+              sed -i '' "s/$from/$to/g" "$f"
+            done
+          }
 
           echo "[*] 替换特征字符串"
 
-          grep -rl "gum-js-loop" . | xargs sed -i '' "s/gum-js-loop/${PIPE_NAME}/g"
-          grep -rl "27042" . | xargs sed -i '' "s/27042/${PORT_NUMBER}/g"
-          grep -rl "frida:rpc" . | xargs sed -i '' "s/frida:rpc/core:rpc/g"
-          grep -rl "frida-agent" . | xargs sed -i '' "s/frida-agent/core-agent/g"
-          grep -rl "re.frida.server" . | xargs sed -i '' "s/re.frida.server/re.core.server/g"
-          grep -rl "FridaScriptEngine" . | xargs sed -i '' "s/FridaScriptEngine/CoreScriptEngine/g"
-          grep -rl "pool-frida" . | xargs sed -i '' "s/pool-frida/pool-core/g"
+          replace "gum-js-loop" "$PIPE_NAME"
+          replace "27042" "$PORT_NUMBER"
+          replace "frida:rpc" "core:rpc"
+          replace "frida-agent" "core-agent"
+          replace "re.frida.server" "re.core.server"
+          replace "FridaScriptEngine" "CoreScriptEngine"
+          replace "pool-frida" "pool-core"
 
           echo "[*] 修改 server 名称"
           sed -i '' "s/frida-server/${FRIDA_NAME}/g" subprojects/frida-core/server/server.vala
@@ -55,7 +65,7 @@ jobs:
           cp build/frida-ios-arm64/bin/frida-server build/dist-arm64/${FRIDA_NAME}
           cp build/frida-ios-arm64/lib/frida/frida-agent.dylib build/dist-arm64/core-agent.dylib
 
-          strip build/dist-arm64/*
+          strip build/dist-arm64/* || true
 
       # ---------- arm64e ----------
       - name: Build arm64e
@@ -67,7 +77,7 @@ jobs:
           cp build/frida-ios-arm64e/bin/frida-server build/dist-arm64e/${FRIDA_NAME}
           cp build/frida-ios-arm64e/lib/frida/frida-agent.dylib build/dist-arm64e/core-agent.dylib
 
-          strip build/dist-arm64e/*
+          strip build/dist-arm64e/* || true
 
       # ---------- DEB arm64 ----------
       - name: Package arm64 DEB
