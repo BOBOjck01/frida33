@@ -45,8 +45,6 @@ jobs:
           # ===== 等长替换（核心）=====
           perl -pi -e 's/frida-server/sysmond____/g' sysmond
           perl -pi -e 's/re\.frida\.server/re.core.server_/g' sysmond
-          perl -pi -e 's/frida-agent/core-agent_/g' sysmond
-          perl -pi -e 's/frida-helper/core-helper_/g' sysmond
           
 
           # ===== 端口（可选）=====
