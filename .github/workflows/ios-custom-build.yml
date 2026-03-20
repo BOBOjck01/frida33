@@ -1,4 +1,4 @@
-name: Build Frida iOS Stealth (ARM64 Stable)
+name: Build Frida iOS Stealth (ARM64 FINAL)
 
 on:
   workflow_dispatch:
@@ -23,23 +23,22 @@ jobs:
       - name: Apply stealth
         run: |
           cd frida_src
-
           set +e
 
-          # 关闭端口
           sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala
-
-          # 禁止监听（USB only）
           sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala
 
-          # 安全字符串替换（仅 runtime 层）
           grep -rIl "gum-js-loop" subprojects | xargs -I{} sed -i '' 's/gum-js-loop/core-js-loop/g' "{}"
           grep -rIl 'default = "frida"' subprojects | xargs -I{} sed -i '' 's/default = "frida"/default = "core"/g' "{}"
 
-          # helper 标识（安全）
           sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent
 
           set -e
+
+      - name: Fix codesign (关键)
+        run: |
+          export IOS_CERTID=""
+          echo "IOS_CERTID cleared"
 
       - name: Clean
         run: |
@@ -49,6 +48,8 @@ jobs:
       - name: Configure
         run: |
           cd frida_src
+
+          export IOS_CERTID=""
 
           ./configure \
             --prefix=/usr \
@@ -63,6 +64,8 @@ jobs:
       - name: Build
         run: |
           cd frida_src
+
+          export IOS_CERTID=""
 
           ninja -C build || make -j$(sysctl -n hw.ncpu)
 
