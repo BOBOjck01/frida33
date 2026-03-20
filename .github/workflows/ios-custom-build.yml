@@ -1,4 +1,4 @@
-name: Build Frida iOS Stealth (ARM64 FINAL STABLE)
+name: Build Frida iOS ARM64 (FINAL FIXED)
 
 on:
   workflow_dispatch:
@@ -20,24 +20,24 @@ jobs:
           git checkout tags/$FRIDA_VERSION
           git submodule update --init --recursive
 
-      - name: Apply stealth
+      - name: Apply patch
         run: |
           cd frida_src
           set +e
 
-          # 端口关闭
+          # 关闭端口监听
           sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala
           sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala
 
-          # 安全字符串混淆
+          # 字符串混淆（安全）
           grep -rIl "gum-js-loop" subprojects | xargs -I{} sed -i '' 's/gum-js-loop/core-js-loop/g' "{}"
           grep -rIl 'default = "frida"' subprojects | xargs -I{} sed -i '' 's/default = "frida"/default = "core"/g' "{}"
 
           # helper 标识
           sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent
 
-          # 禁用 codesign（关键）
-          sed -i '' 's/codesign/#codesign/g' subprojects/frida-core/tools/post-process.py
+          # ✅ 正确禁用 codesign（不会破坏 Python）
+          sed -i '' 's|/usr/bin/codesign|true|g' subprojects/frida-core/tools/post-process.py
 
           set -e
 
@@ -82,20 +82,21 @@ jobs:
           cp build-arm64/usr/lib/frida/frida-agent.dylib pkg/usr/lib/frida/
           cp build-arm64/usr/lib/frida/frida-helper pkg/usr/lib/frida/
 
-          # arm
           cat > pkg/DEBIAN/control <<EOF
           Package: com.core.internald
           Name: internald
           Version: $FRIDA_VERSION
-          Architecture: iphoneos-arm
+          Architecture: iphoneos-arm64
           Description: stealth frida
           Maintainer: you
           Section: Development
           Depends: firmware (>= 12.0)
           EOF
 
-          dpkg-deb -b pkg frida-arm.deb
+          dpkg-deb -b pkg frida-arm64.deb
 
-          # arm64
-          sed -i '' 's/iphoneos-arm/iphoneos-arm64/g' pkg/DEBIAN/control
-          dpkg-deb -b pkg frida-arm64.de
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-ios
+          path: frida_src/frida-arm64.deb
