@@ -43,7 +43,7 @@ jobs:
       - name: 编译（仅 server）
         run: |
           cd frida_src
-          ninja -C build frida-server
+          ninja -C build server/frida-server
 
       # ===== 安装 dpkg =====
       - name: 安装 dpkg
