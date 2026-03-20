@@ -1,4 +1,4 @@
-name: 构建 Frida iOS（稳定 + USB Only + 双环境 + 轻度高隐匿）
+name: 构建 Frida iOS（稳定 + USB Only + 双环境 + 安全隐匿）
 
 on:
   workflow_dispatch:
@@ -14,20 +14,15 @@ jobs:
       # ===== 拉源码 =====
       - name: 拉取源码
         run: |
-          git clone https://github.com/frida/frida.git frida_src
+          brew install dpkg
+          git clone --depth 1 --branch $FRIDA_VERSION https://github.com/frida/frida.git frida_src
           cd frida_src
-          git fetch --tags --force
-          git checkout tags/$FRIDA_VERSION
           git submodule update --init --recursive
 
-      # ===== 清理 =====
-      - name: 清理
-        run: |
-          cd frida_src
-          rm -rf build
-
-      # ===== 配置 =====
-      - name: 配置
+      # ===== 配置 & 编译 =====
+      - name: 编译
+        env:
+          IOS_CERTID: "-"
         run: |
           cd frida_src
           ./configure \
@@ -37,57 +32,52 @@ jobs:
             --disable-gadget \
             --disable-frida-python \
             --disable-frida-tools
-
-      # ===== 编译 =====
-      - name: 编译
-        env:
-          IOS_CERTID: "-"
-        run: |
-          cd frida_src
           ninja -C build
 
-      # ===== 安装 dpkg =====
-      - name: 安装 dpkg
-        run: brew install dpkg
-
-      # ===== 打包 =====
-      - name: 打包（稳定 + 轻度高隐匿）
+      # ===== 二进制处理 =====
+      - name: 去特征
         run: |
           cd frida_src
 
-          SERVER_PATH=$(find build -name frida-server | head -n 1)
-          [ -z "$SERVER_PATH" ] && echo "❌ no server" && exit 1
+          SERVER=$(find build -name frida-server | head -n 1)
+          cp "$SERVER" sysmond
 
-          # ===== 二进制处理 =====
-          cp "$SERVER_PATH" sysmond
-
-          # ===== 精准去特征（安全）=====
-          perl -pi -e 's/\bfrida-server\b/sysmond____/g' sysmond
-          perl -pi -e 's/re\.frida\.server/re.core.server/g' sysmond
-          perl -pi -e 's/\bfrida-agent\b/core-agent/g' sysmond
-          perl -pi -e 's/\bfrida-helper\b/core-helper/g' sysmond
-          perl -pi -e 's/\bFrida\b/CoreDaemon/g' sysmond
+          # ===== 等长替换（核心）=====
+          perl -pi -e 's/frida-server/sysmond____/g' sysmond
+          perl -pi -e 's/re\.frida\.server/re.core.server_/g' sysmond
+          perl -pi -e 's/frida-agent/core-agent_/g' sysmond
+          perl -pi -e 's/frida-helper/core-helper_/g' sysmond
+          perl -pi -e 's/Frida/Sysmd/g' sysmond
 
           # ===== 端口（可选）=====
           perl -pi -e 's/27042/39042/g' sysmond
           perl -pi -e 's/27043/39043/g' sysmond
 
-          # ===== 权限 & 精简 =====
           chmod 755 sysmond
+
+          # ===== 精简（双保险）=====
+          strip -S sysmond || true
           strip -x sysmond || true
 
-          # =========================================================
-          # ===== rootful（Cydia / iOS14）=====
-          # =========================================================
-          rm -rf pkg
-          mkdir -p pkg/DEBIAN pkg/usr/bin
+          # ===== 检测残留 =====
+          echo "==== check ===="
+          strings sysmond | grep -i frida || true
 
-          cp sysmond pkg/usr/bin/sysmond
+      # ===== 打包 =====
+      - name: 打包
+        run: |
+          cd frida_src
+          V=${{ env.FRIDA_VERSION }}
 
-          cat > pkg/DEBIAN/control <<EOF
+          # ---------- rootful ----------
+          rm -rf pkg_rf
+          mkdir -p pkg_rf/DEBIAN pkg_rf/usr/bin
+          cp sysmond pkg_rf/usr/bin/sysmond
+
+          cat > pkg_rf/DEBIAN/control <<EOF
           Package: re.core.server
           Name: sysmond
-          Version: $FRIDA_VERSION
+          Version: $V
           Architecture: iphoneos-arm
           Description: system service
           Maintainer: root
@@ -95,23 +85,17 @@ jobs:
           Depends: firmware (>= 12.0)
           EOF
 
-          dpkg-deb -b pkg frida-rootfularm.deb
+          dpkg-deb -b pkg_rf frida-rootful.deb
 
-          # =========================================================
-          # ===== rootless（iOS15+）=====
-          # =========================================================
-          rm -rf pkg
-          mkdir -p pkg/DEBIAN pkg/var/jb/usr/bin pkg/usr/bin
+          # ---------- rootless ----------
+          rm -rf pkg_rl
+          mkdir -p pkg_rl/DEBIAN pkg_rl/var/jb/usr/bin
+          cp sysmond pkg_rl/var/jb/usr/bin/sysmond
 
-          cp sysmond pkg/var/jb/usr/bin/sysmond
-
-          # 兼容直接调用
-          ln -sf /var/jb/usr/bin/sysmond pkg/usr/bin/sysmond
-
-          cat > pkg/DEBIAN/control <<EOF
+          cat > pkg_rl/DEBIAN/control <<EOF
           Package: re.core.server
           Name: sysmond
-          Version: $FRIDA_VERSION
+          Version: $V
           Architecture: iphoneos-arm64
           Description: system service
           Maintainer: root
@@ -119,13 +103,11 @@ jobs:
           Depends: firmware (>= 15.0)
           EOF
 
-          dpkg-deb -b pkg frida-rootlessarm64.deb
+          dpkg-deb -b pkg_rl frida-rootless.deb
 
       # ===== 上传 =====
       - name: 上传
         uses: actions/upload-artifact@v4
         with:
           name: frida-ios-final
-          path: |
-            frida_src/frida-rootful.deb
-            frida_src/frida-rootless.deb
+          path: frida_src/*.deb
