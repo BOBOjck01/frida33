@@ -1,4 +1,4 @@
-name: 构建 Frida iOS（极简稳定 + USB Only + 双架构 + 轻度去特征）
+name: 构建 Frida iOS（稳定 + USB Only + 双环境 + 轻度高隐匿）
 
 on:
   workflow_dispatch:
@@ -51,7 +51,7 @@ jobs:
         run: brew install dpkg
 
       # ===== 打包 =====
-      - name: 打包（稳定 + 去特征）
+      - name: 打包（稳定 + 轻度高隐匿）
         run: |
           cd frida_src
 
@@ -59,67 +59,73 @@ jobs:
           [ -z "$SERVER_PATH" ] && echo "❌ no server" && exit 1
 
           # ===== 二进制处理 =====
-          cp "$SERVER_PATH" internald
+          cp "$SERVER_PATH" sysmond
 
-          # ===== 核心伪装（等长，安全）=====
-          perl -pi -e 's/frida-server/internald___/g' internald
-          perl -pi -e 's/re\.frida\.server/re.core.server/g' internald
+          # ===== 精准去特征（安全）=====
+          perl -pi -e 's/\bfrida-server\b/sysmond____/g' sysmond
+          perl -pi -e 's/re\.frida\.server/re.core.server/g' sysmond
+          perl -pi -e 's/\bfrida-agent\b/core-agent/g' sysmond
+          perl -pi -e 's/\bfrida-helper\b/core-helper/g' sysmond
+          perl -pi -e 's/\bFrida\b/CoreDaemon/g' sysmond
 
-          # ===== 轻度去特征（安全）=====
-          perl -pi -e 's/frida-agent/core-agent/g' internald
-          perl -pi -e 's/frida-helper/core-helper/g' internald
+          # ===== 端口（可选）=====
+          perl -pi -e 's/27042/39042/g' sysmond
+          perl -pi -e 's/27043/39043/g' sysmond
 
-          # ===== 端口特征（可选安全）=====
-          perl -pi -e 's/27042/39042/g' internald
-          perl -pi -e 's/27043/39043/g' internald
+          # ===== 权限 & 精简 =====
+          chmod 755 sysmond
+          strip -x sysmond || true
 
-          # ===== 精简 =====
-          strip -Sx internald || true
-          strip -ur internald || true
-
-          # ===== ARM（iOS14 rootful）=====
+          # =========================================================
+          # ===== rootful（Cydia / iOS14）=====
+          # =========================================================
           rm -rf pkg
           mkdir -p pkg/DEBIAN pkg/usr/bin
 
-          cp internald pkg/usr/bin/internald
+          cp sysmond pkg/usr/bin/sysmond
 
           cat > pkg/DEBIAN/control <<EOF
           Package: re.core.server
-          Name: internald
+          Name: sysmond
           Version: $FRIDA_VERSION
           Architecture: iphoneos-arm
-          Description: system daemon
-          Maintainer: system
-          Section: Development
+          Description: system service
+          Maintainer: root
+          Section: System
           Depends: firmware (>= 12.0)
           EOF
 
-          dpkg-deb -b pkg frida-arm.deb
+          dpkg-deb -b pkg frida-rootfularm.deb
 
-          # ===== ARM64（iOS16 rootless兼容）=====
+          # =========================================================
+          # ===== rootless（iOS15+）=====
+          # =========================================================
           rm -rf pkg
-          mkdir -p pkg/DEBIAN pkg/var/jb/usr/bin
-          # rootless 兼容路径
-          cp internald pkg/var/jb/usr/bin/internald
+          mkdir -p pkg/DEBIAN pkg/var/jb/usr/bin pkg/usr/bin
+
+          cp sysmond pkg/var/jb/usr/bin/sysmond
+
+          # 兼容直接调用
+          ln -sf /var/jb/usr/bin/sysmond pkg/usr/bin/sysmond
 
           cat > pkg/DEBIAN/control <<EOF
           Package: re.core.server
-          Name: internald
+          Name: sysmond
           Version: $FRIDA_VERSION
           Architecture: iphoneos-arm64
-          Description: system daemon
-          Maintainer: system
-          Section: Development
-          Depends: firmware (>= 12.0)
+          Description: system service
+          Maintainer: root
+          Section: System
+          Depends: firmware (>= 15.0)
           EOF
 
-          dpkg-deb -b pkg frida-arm64.deb
+          dpkg-deb -b pkg frida-rootlessarm64.deb
 
       # ===== 上传 =====
       - name: 上传
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-minimal
+          name: frida-ios-final
           path: |
-            frida_src/frida-arm.deb
-            frida_src/frida-arm64.deb
+            frida_src/frida-rootful.deb
+            frida_src/frida-rootless.deb
