@@ -98,11 +98,7 @@ jobs:
 
           # ===== ARM64（iOS16 rootless兼容）=====
           rm -rf pkg
-          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/var/jb/usr/bin
-
-          # 主路径（你要求保留）
-          cp internald pkg/usr/bin/internald
-
+          mkdir -p pkg/DEBIAN pkg/var/jb/usr/bin
           # rootless 兼容路径
           cp internald pkg/var/jb/usr/bin/internald
 
