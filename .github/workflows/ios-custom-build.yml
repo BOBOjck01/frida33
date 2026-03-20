@@ -1,4 +1,4 @@
-name: Build Frida iOS (Stealth Advanced)
+name: Build Frida iOS (Stable 16.2.1 - Root Corrected)
 
 on:
   workflow_dispatch:
@@ -9,94 +9,65 @@ jobs:
 
     env:
       FRIDA_VERSION: 16.2.1
-      FRIDA_NAME: internald
-      AGENT_NAME: systemd-agent.dylib
+      FRIDA_NAME: internald  # 这是安装后的二进制文件名
 
     steps:
       - name: Clone
         run: |
-          git clone https://github.com/frida/frida.git .
-          git checkout ${FRIDA_VERSION}
-          git submodule update --init --recursive
+          git clone --recurse-submodules --depth 1 --branch ${FRIDA_VERSION} https://github.com/frida/frida.git .
 
       - name: Setup
         run: |
           brew install meson ninja pkg-config dpkg
           python3 -m venv venv
           source venv/bin/activate
-          pip install meson ninja
+          pip install meson ninja setuptools wheel
 
-      - name: Patch (Stealth Core)
+      - name: Patch Features (Stealth)
         run: |
           set -e
-
-          # 基础特征替换
+          # 1. 基础特征抹除
           find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' \
-            -e 's/frida/core/g' \
-            -e 's/Frida/Core/g' \
             -e 's/gum-js-loop/core-js-loop/g' \
             -e 's/pool-frida/pool-core/g' \
             -e 's/27042/27088/g' {} + || true
 
-      - name: Build arm64
+          # 2. 修改源码中的 Server 标识
+          find subprojects/frida-core/server -name "*.vala" \
+            -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
+
+      - name: Build (Meson System)
         run: |
           set -e
           source venv/bin/activate
-
           cd subprojects/frida-core
 
-          meson setup build-arm64 \
-            --cross-file=releng/ios/ios-arm64.txt \
-            -Dserver=true \
-            -Doptimization=s
-
+          # Build arm64
+          meson setup build-arm64 --cross-file=releng/ios/ios-arm64.txt -Dserver=true -Doptimization=s
           meson compile -C build-arm64
 
-      - name: Build arm64e
-        run: |
-          set -e
-          source venv/bin/activate
-
-          cd subprojects/frida-core
-
+          # Build arm64e
           export MACOSX_DEPLOYMENT_TARGET=11.0
-
-          meson setup build-arm64e \
-            --cross-file=releng/ios/ios-arm64e.txt \
-            -Dserver=true \
-            -Doptimization=s || true
-
+          meson setup build-arm64e --cross-file=releng/ios/ios-arm64e.txt -Dserver=true -Doptimization=s || true
           meson compile -C build-arm64e || true
 
-      - name: Package (Stealth)
+      - name: Package DEB
         run: |
           set -e
-
           for arch in arm64 arm64e; do
-            BUILD_DIR=subprojects/frida-core/build-$arch
+            BUILD_DIR="subprojects/frida-core/build-$arch"
+            if [ ! -d "$BUILD_DIR" ]; then continue; fi
 
             SERVER_PATH=$(find "$BUILD_DIR" -name "frida-server" -type f | head -n 1)
             AGENT_PATH=$(find "$BUILD_DIR" -name "frida-agent.dylib" -type f | head -n 1)
 
-            if [ -z "$SERVER_PATH" ]; then
-              echo "skip $arch"
-              continue
-            fi
+            mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
 
-            mkdir -p deb-$arch/DEBIAN
-            mkdir -p deb-$arch/usr/sbin
-            mkdir -p deb-$arch/usr/lib
-
-            # 重命名 server
+            # 关键修正：Server 改名，但 Agent 保持原名以确保加载路径正确
             cp "$SERVER_PATH" deb-$arch/usr/sbin/${FRIDA_NAME}
+            cp "$AGENT_PATH" deb-$arch/usr/lib/frida/frida-agent.dylib
 
-            # 重命名 agent
-            cp "$AGENT_PATH" deb-$arch/usr/lib/${AGENT_NAME}
-
-            # strip（去符号）
             strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
-            strip deb-$arch/usr/lib/${AGENT_NAME} || true
-
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
             cat > deb-$arch/DEBIAN/control <<EOF
@@ -104,15 +75,14 @@ Package: com.custom.${FRIDA_NAME}.${arch}
 Name: ${FRIDA_NAME}
 Version: ${FRIDA_VERSION}
 Architecture: iphoneos-arm
-Description: Custom Frida (Stealth Advanced)
+Description: Custom Frida 16.2.1 (Stable Base)
 Maintainer: Dev
 EOF
-
             dpkg-deb -b deb-$arch ${FRIDA_NAME}_${arch}.deb
           done
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-stealth
+          name: frida-ios-16.2.1-stable
           path: "*.deb"
