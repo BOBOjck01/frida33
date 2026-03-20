@@ -1,48 +1,146 @@
-name: Build Frida iOS (Stealth Patch Mode)
+name: Build Frida iOS Stealth (Universal + DEB)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-ios:
+  build:
     runs-on: macos-14
 
+    env:
+      FRIDA_VERSION: 16.6.6
+      FRIDA_NAME: internald
+      PORT: 27088
+
     steps:
-      - name: Checkout This Repo
-        uses: actions/checkout@v4
-
-      - name: Clone Frida Official
+      - name: Checkout
         run: |
-          # 递归克隆 16.2.1 源码
-          git clone --recurse-submodules --depth 1 --branch 16.2.1 https://github.com/frida/frida.git frida_src
+          git clone --recurse-submodules --depth 1 \
+            https://github.com/frida/frida.git frida_src
+          cd frida_src
+          git fetch --tags
+          git checkout $FRIDA_VERSION || true
 
-      - name: Apply Stealth Patch
+      - name: Prepare submodules
         run: |
           cd frida_src
-          # 强制应用补丁，忽略微小差异
-          git apply --ignore-whitespace ../stealth.patch
+          python3 tools/ensure-submodules.py frida-core
 
-      - name: Setup Environment
-        run: |
-          brew install meson ninja pkg-config
-          python3 -m pip install setuptools wheel
-
-      - name: Official Build (arm64 & arm64e)
+      # ===== stealth 修改 =====
+      - name: Apply stealth patch (sed)
         run: |
           cd frida_src
-          # 调用官方脚本，自动处理 SDK 和路径
-          make ios-arm64
-          make ios-arm64e || true
 
-      - name: Collect Binaries
+          # 端口
+          sed -i '' "s/default = 27042/default = $PORT/" \
+          subprojects/frida-core/server/server.vala
+
+          # js loop
+          sed -i '' 's/gum-js-loop/core-js-loop/' \
+          subprojects/frida-gum/gum/gumjs/gumscriptbackend.c
+
+          # agent 名
+          sed -i '' 's/frida-agent.dylib/internal-agent.dylib/' \
+          subprojects/frida-gum/gum/backend-darwin/gummemory-darwin.c
+
+          # session tag
+          sed -i '' 's/default = "frida"/default = "core"/' \
+          subprojects/frida-core/lib/base/session.vala
+
+      # ===== build arm64 =====
+      - name: Build arm64
         run: |
-          mkdir -p output
-          # 提取编译后的二进制文件
-          find frida_src/build/ -name "frida-server" -exec cp {} output/ \;
-          find frida_src/build/ -name "frida-agent.dylib" -exec cp {} output/ \;
+          cd frida_src
 
-      - name: Upload Artifacts
+          ./configure \
+            --prefix=/usr \
+            --host=ios-arm64 \
+            --enable-portal \
+            -- \
+            -Dfrida-gum:devkits=gum,gumjs \
+            -Dfrida-core:compiler_backend=enabled \
+            -Dfrida-core:assets=installed \
+            -Dfrida-core:devkits=core
+
+          make -j8
+          DESTDIR=build-arm64 make install
+
+      # ===== clean =====
+      - name: Clean
+        run: |
+          cd frida_src
+          make clean || true
+
+      # ===== build arm64e =====
+      - name: Build arm64e
+        run: |
+          cd frida_src
+
+          ./configure \
+            --prefix=/usr \
+            --host=ios-arm64e \
+            --enable-portal \
+            -- \
+            -Dfrida-gum:devkits=gum,gumjs \
+            -Dfrida-core:compiler_backend=disabled \
+            -Dfrida-core:assets=installed \
+            -Dfrida-core:devkits=core
+
+          make -j8
+          DESTDIR=build-arm64e make install
+
+      # ===== 合并 =====
+      - name: Merge universal
+        run: |
+          cd frida_src
+
+          mkdir -p final/usr/bin
+          mkdir -p final/usr/lib/frida
+
+          # server
+          lipo \
+            build-arm64/usr/bin/frida-server \
+            build-arm64e/usr/bin/frida-server \
+            -create -output final/usr/bin/$FRIDA_NAME
+
+          # agent
+          lipo \
+            build-arm64/usr/lib/frida/internal-agent.dylib \
+            build-arm64e/usr/lib/frida/internal-agent.dylib \
+            -create -output final/usr/lib/frida/internal-agent.dylib
+
+          # 签名（必须）
+          codesign -f -s "-" final/usr/bin/$FRIDA_NAME
+          codesign -f -s "-" final/usr/lib/frida/internal-agent.dylib
+
+      # ===== deb =====
+      - name: Create DEB
+        run: |
+          cd frida_src
+
+          mkdir -p pkg/DEBIAN
+          mkdir -p pkg/usr/bin
+          mkdir -p pkg/usr/lib/frida
+
+          cp final/usr/bin/$FRIDA_NAME pkg/usr/bin/
+          cp final/usr/lib/frida/internal-agent.dylib pkg/usr/lib/frida/
+
+          cat > pkg/DEBIAN/control <<EOF
+          Package: com.core.internald
+          Name: internald
+          Version: $FRIDA_VERSION
+          Architecture: iphoneos-arm
+          Description: stealth frida server
+          Maintainer: you
+          Author: you
+          Section: Development
+          Depends: mobilesubstrate
+          EOF
+
+          dpkg-deb -b pkg frida-stealth.deb
+
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-stealth-binaries
-          path: output/
+          name: frida-ios-stealth
+          path: frida_src/frida-stealth.deb
