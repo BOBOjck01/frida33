@@ -1,4 +1,4 @@
-name: Build Frida iOS (ARM64 Clean Stable)
+name: Build Frida iOS (ARM64 Stable No-Install)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ jobs:
 
     env:
       FRIDA_VERSION: "16.6.6"
-      IOS_CERTID: "-"   # 关键：关闭签名
+      IOS_CERTID: "-"
 
     steps:
       - name: Checkout
@@ -23,7 +23,7 @@ jobs:
       - name: Clean
         run: |
           cd frida_src
-          rm -rf build build-out
+          rm -rf build
 
       - name: Configure
         run: |
@@ -39,19 +39,16 @@ jobs:
           cd frida_src
           ninja -C build
 
-      - name: Install
+      - name: Debug (确认产物)
         run: |
           cd frida_src
-          DESTDIR=build-out ninja -C build install
+          echo "==== build目录 ===="
+          ls build | head -n 50
 
-      - name: Debug Paths
-        run: |
-          cd frida_src
-          echo "==== find frida-server ===="
-          find build-out -name frida-server || true
-
-          echo "==== list build-out ===="
-          ls -R build-out | head -n 200
+          echo "==== 查找关键文件 ===="
+          find build -name frida-server || true
+          find build -name frida-agent.dylib || true
+          find build -name frida-helper || true
 
       - name: Package
         run: |
@@ -61,8 +58,10 @@ jobs:
           mkdir -p pkg/usr/bin
           mkdir -p pkg/usr/lib/frida
 
-          # ✅ 自动定位 frida-server（关键修复）
-          SERVER_PATH=$(find build-out -name frida-server | head -n 1)
+          # ✅ 自动定位
+          SERVER_PATH=$(find build -name frida-server | head -n 1)
+          AGENT_PATH=$(find build -name frida-agent.dylib | head -n 1)
+          HELPER_PATH=$(find build -name frida-helper | head -n 1)
 
           if [ -z "$SERVER_PATH" ]; then
             echo "❌ frida-server not found"
@@ -70,12 +69,7 @@ jobs:
           fi
 
           echo "Using server: $SERVER_PATH"
-
           cp "$SERVER_PATH" pkg/usr/bin/frida-server
-
-          # agent / helper（存在才复制）
-          AGENT_PATH=$(find build-out -name frida-agent.dylib | head -n 1)
-          HELPER_PATH=$(find build-out -name frida-helper | head -n 1)
 
           [ -f "$AGENT_PATH" ] && cp "$AGENT_PATH" pkg/usr/lib/frida/ || true
           [ -f "$HELPER_PATH" ] && cp "$HELPER_PATH" pkg/usr/lib/frida/ || true
