@@ -1,4 +1,4 @@
-name: Build Frida iOS (ARM64 Dual Package Stable)
+name: Build Frida iOS (Stable + USB Only + Dual)
 
 on:
   workflow_dispatch:
@@ -25,16 +25,24 @@ jobs:
           cd frida_src
           rm -rf build
 
-      # ✅ 精准裁剪（安全）
-      - name: Precise trim
+      # ✅ 轻量精准裁剪（稳定）
+      - name: Safe trim
         run: |
           cd frida_src
 
           grep -rIl "frida-server" subprojects | xargs -I{} sed -i '' 's/frida-server/internald/g' "{}" || true
-          grep -rIl "re.frida.server" subprojects | xargs -I{} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
           grep -rIl "frida-agent" subprojects | xargs -I{} sed -i '' 's/frida-agent/core-agent/g' "{}" || true
+          grep -rIl "frida-helper" subprojects | xargs -I{} sed -i '' 's/frida-helper/core-helper/g' "{}" || true
 
           sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent || true
+
+      # ✅ 关闭端口（USB only）
+      - name: Disable TCP
+        run: |
+          cd frida_src
+
+          sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala || true
+          sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala || true
 
       - name: Configure
         run: |
@@ -45,21 +53,18 @@ jobs:
             --host=ios-arm64 \
             --enable-portal \
             --disable-frida-python \
-            --disable-frida-node \
-            --disable-frida-swift \
-            --disable-frida-qml \
-            --disable-frida-tools \
-            --disable-frida-clr
+            --disable-frida-tools
 
       - name: Build
         run: |
           cd frida_src
           ninja -C build
 
+      # ✅ 减体积
       - name: Strip
         run: |
           cd frida_src
-          find build -type f -perm +111 -exec strip -S {} \; || true
+          find build -type f -perm -111 -exec strip -S {} \; || true
 
       - name: Install dpkg
         run: |
@@ -80,7 +85,7 @@ jobs:
 
           echo "Using server: $SERVER_PATH"
 
-          # ================= ARM 包 =================
+          # ========= ARM（iOS14 Cydia）=========
           rm -rf pkg
           mkdir -p pkg/DEBIAN
           mkdir -p pkg/usr/bin
@@ -103,14 +108,14 @@ jobs:
 
           dpkg-deb -b pkg frida-arm.deb
 
-          # ================= ARM64 包 =================
-          sed -i '' 's/iphoneos-arm/iphoneos-arm64/g' pkg/DEBIAN/control
+          # ========= ARM64（iOS16 rootless）=========
+          sed -i '' 's/^Architecture: iphoneos-arm$/Architecture: iphoneos-arm64/' pkg/DEBIAN/control
           dpkg-deb -b pkg frida-arm64.deb
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-dual
+          name: frida-ios-final
           path: |
             frida_src/frida-arm.deb
             frida_src/frida-arm64.deb
