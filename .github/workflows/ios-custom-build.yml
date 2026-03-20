@@ -1,4 +1,4 @@
-name: Build Custom Frida iOS (Stable Stealth)
+name: Build Custom Frida iOS (Stealth)
 
 on:
   workflow_dispatch:
@@ -23,18 +23,16 @@ jobs:
           source venv/bin/activate
           pip install meson ninja setuptools wheel
 
-      - name: Patch (Stealth)
+      - name: Patch
         run: |
           set -e
 
-          # 特征字符串
           find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
             -exec sed -i '' 's/gum-js-loop/core-js-loop/g' {} + || true
 
           find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
             -exec sed -i '' 's/pool-frida/pool-core/g' {} + || true
 
-          # 端口修改
           find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
             -exec sed -i '' 's/27042/27088/g' {} + || true
 
@@ -43,7 +41,6 @@ jobs:
           set -e
           source venv/bin/activate
 
-          # arm64
           meson setup build-arm64 \
             --cross-file=releng/meson/ios-arm64.txt \
             -Dserver=true \
@@ -52,7 +49,6 @@ jobs:
 
           meson compile -C build-arm64
 
-          # arm64e（部分环境可能失败，允许跳过）
           export MACOSX_DEPLOYMENT_TARGET=11.0
 
           meson setup build-arm64e \
@@ -63,7 +59,7 @@ jobs:
 
           meson compile -C build-arm64e || true
 
-      - name: Package DEB
+      - name: Package
         run: |
           set -e
 
@@ -74,7 +70,7 @@ jobs:
             AGENT_PATH=$(find $BUILD_DIR -name "frida-agent.dylib" -type f | head -n 1)
 
             if [ -z "$SERVER_PATH" ]; then
-              echo "Skip $arch (no build)"
+              echo "skip $arch"
               continue
             fi
 
@@ -88,12 +84,12 @@ jobs:
             strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
-            cat > deb-$arch/DEBIAN/control <<-EOF
+            cat > deb-$arch/DEBIAN/control <<EOF
 Package: com.custom.${FRIDA_NAME}.${arch}
 Name: ${FRIDA_NAME}
 Version: ${FRIDA_VERSION}
 Architecture: iphoneos-arm
-Description: Custom Frida (Stealth)
+Description: Custom Frida
 Maintainer: Dev
 EOF
 
@@ -103,5 +99,5 @@ EOF
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-${{ env.FRIDA_VERSION }}-stealth
+          name: frida-ios
           path: "*.deb"
