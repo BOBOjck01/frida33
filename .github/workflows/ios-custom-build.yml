@@ -1,4 +1,4 @@
-name: Build Frida iOS (ARM64 Stable No-Install)
+name: Build Frida iOS (ARM64 Stable Final)
 
 on:
   workflow_dispatch:
@@ -39,16 +39,9 @@ jobs:
           cd frida_src
           ninja -C build
 
-      - name: Debug (确认产物)
+      - name: Install dpkg
         run: |
-          cd frida_src
-          echo "==== build目录 ===="
-          ls build | head -n 50
-
-          echo "==== 查找关键文件 ===="
-          find build -name frida-server || true
-          find build -name frida-agent.dylib || true
-          find build -name frida-helper || true
+          brew install dpkg
 
       - name: Package
         run: |
@@ -58,7 +51,6 @@ jobs:
           mkdir -p pkg/usr/bin
           mkdir -p pkg/usr/lib/frida
 
-          # ✅ 自动定位
           SERVER_PATH=$(find build -name frida-server | head -n 1)
           AGENT_PATH=$(find build -name frida-agent.dylib | head -n 1)
           HELPER_PATH=$(find build -name frida-helper | head -n 1)
