@@ -1,4 +1,4 @@
-name: Build Frida iOS (Stable 16.2.1 - Root Corrected)
+name: Build Frida iOS (Stable 16.2.1 - Syntax Fixed)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ jobs:
 
     env:
       FRIDA_VERSION: 16.2.1
-      FRIDA_NAME: internald  # 这是安装后的二进制文件名
+      FRIDA_NAME: internald
 
     steps:
       - name: Clone
@@ -23,30 +23,24 @@ jobs:
           source venv/bin/activate
           pip install meson ninja setuptools wheel
 
-      - name: Patch Features (Stealth)
+      - name: Patch Features
         run: |
           set -e
-          # 1. 基础特征抹除
           find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' \
             -e 's/gum-js-loop/core-js-loop/g' \
             -e 's/pool-frida/pool-core/g' \
             -e 's/27042/27088/g' {} + || true
 
-          # 2. 修改源码中的 Server 标识
           find subprojects/frida-core/server -name "*.vala" \
             -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
 
-      - name: Build (Meson System)
+      - name: Build
         run: |
           set -e
           source venv/bin/activate
           cd subprojects/frida-core
-
-          # Build arm64
           meson setup build-arm64 --cross-file=releng/ios/ios-arm64.txt -Dserver=true -Doptimization=s
           meson compile -C build-arm64
-
-          # Build arm64e
           export MACOSX_DEPLOYMENT_TARGET=11.0
           meson setup build-arm64e --cross-file=releng/ios/ios-arm64e.txt -Dserver=true -Doptimization=s || true
           meson compile -C build-arm64e || true
@@ -62,23 +56,21 @@ jobs:
             AGENT_PATH=$(find "$BUILD_DIR" -name "frida-agent.dylib" -type f | head -n 1)
 
             mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
-
-            # 关键修正：Server 改名，但 Agent 保持原名以确保加载路径正确
             cp "$SERVER_PATH" deb-$arch/usr/sbin/${FRIDA_NAME}
             cp "$AGENT_PATH" deb-$arch/usr/lib/frida/frida-agent.dylib
 
             strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
+            # 注意：这里的 EOF 必须绝对顶格，不能有任何前导空格
             cat > deb-$arch/DEBIAN/control <<EOF
 Package: com.custom.${FRIDA_NAME}.${arch}
 Name: ${FRIDA_NAME}
 Version: ${FRIDA_VERSION}
 Architecture: iphoneos-arm
-Description: Custom Frida 16.2.1 (Stable Base)
+Description: Custom Frida 16.2.1 Stable
 Maintainer: Dev
 EOF
-            dpkg-deb -b deb-$arch ${FRIDA_NAME}_${arch}.deb
           done
 
       - name: Upload
