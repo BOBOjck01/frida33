@@ -1,4 +1,4 @@
-name: Build Frida iOS Stable 16.2.1
+name: Build Frida iOS Standard
 
 on:
   workflow_dispatch:
@@ -7,68 +7,47 @@ jobs:
   build-ios:
     runs-on: macos-14
 
-    env:
-      FRIDA_VERSION: 16.2.1
-      FRIDA_NAME: internald
-
     steps:
-      - name: Clone
+      - name: Checkout Frida
         run: |
-          git clone --recurse-submodules --depth 1 --branch ${FRIDA_VERSION} https://github.com/frida/frida.git .
+          git clone --recurse-submodules --depth 1 --branch 16.2.1 https://github.com/frida/frida.git .
 
-      - name: Setup
+      - name: Setup Environment
         run: |
           brew install meson ninja pkg-config dpkg
           python3 -m venv venv
           source venv/bin/activate
           pip install meson ninja setuptools wheel
 
-      - name: Patch Features
+      - name: Build arm64
         run: |
-          set -e
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' \
-            -e 's/gum-js-loop/core-js-loop/g' \
-            -e 's/pool-frida/pool-core/g' \
-            -e 's/27042/27088/g' {} + || true
-
-          find subprojects/frida-core/server -name "*.vala" \
-            -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
-
-      - name: Build
-        run: |
-          set -e
           source venv/bin/activate
           cd subprojects/frida-core
+          # 使用官方提供的 cross-file
           meson setup build-arm64 --cross-file=releng/ios/ios-arm64.txt -Dserver=true -Doptimization=s
           meson compile -C build-arm64
+
+      - name: Build arm64e
+        run: |
+          source venv/bin/activate
+          cd subprojects/frida-core
           export MACOSX_DEPLOYMENT_TARGET=11.0
           meson setup build-arm64e --cross-file=releng/ios/ios-arm64e.txt -Dserver=true -Doptimization=s || true
           meson compile -C build-arm64e || true
 
-      - name: Package DEB
+      - name: Collect Binaries
         run: |
-          set -e
-          for arch in arm64 arm64e; do
-            BUILD_DIR="subprojects/frida-core/build-$arch"
-            if [ ! -d "$BUILD_DIR" ]; then continue; fi
+          mkdir -p output/arm64 output/arm64e
+          
+          # 提取编译好的二进制文件
+          find subprojects/frida-core/build-arm64 -name "frida-server" -exec cp {} output/arm64/ \;
+          find subprojects/frida-core/build-arm64 -name "frida-agent.dylib" -exec cp {} output/arm64/ \;
+          
+          find subprojects/frida-core/build-arm64e -name "frida-server" -exec cp {} output/arm64e/ \; || true
+          find subprojects/frida-core/build-arm64e -name "frida-agent.dylib" -exec cp {} output/arm64e/ \; || true
 
-            SERVER_PATH=$(find "$BUILD_DIR" -name "frida-server" -type f | head -n 1)
-            AGENT_PATH=$(find "$BUILD_DIR" -name "frida-agent.dylib" -type f | head -n 1)
-
-            mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
-            cp "$SERVER_PATH" deb-$arch/usr/sbin/${FRIDA_NAME}
-            cp "$AGENT_PATH" deb-$arch/usr/lib/frida/frida-agent.dylib
-
-            strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
-            chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
-
-            # --- 警告：下方的 EOF 必须绝对顶格 ---
-            cat > deb-$arch/DEBIAN/control <<EOF
-Package: com.custom.${FRIDA_NAME}.${arch}
-Name: ${FRIDA_NAME}
-Version: ${FRIDA_VERSION}
-Architecture: iphoneos-arm
-Description: Custom Frida 16.2.1 Stable
-Maintainer: Dev
-EOF
-            # --- 警告
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-ios-binaries
+          path: output/
