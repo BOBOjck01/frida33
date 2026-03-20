@@ -11,15 +11,19 @@ jobs:
       FRIDA_VERSION: "16.6.6"
 
     steps:
+      # ===== 环境 =====
+      - name: 安装依赖
+        run: |
+          brew install dpkg python || true
+
       # ===== 拉源码 =====
       - name: 拉取源码
         run: |
-          brew install dpkg
-          git clone --depth 1 --branch $FRIDA_VERSION https://github.com/frida/frida.git frida_src
+          git clone --depth 1 --branch $FRIDA_VERSION --single-branch https://github.com/frida/frida.git frida_src
           cd frida_src
           git submodule update --init --recursive
 
-      # ===== 配置 & 编译 =====
+      # ===== 编译 =====
       - name: 编译
         env:
           IOS_CERTID: "-"
@@ -32,33 +36,95 @@ jobs:
             --disable-gadget \
             --disable-frida-python \
             --disable-frida-tools
-          ninja -C build
+
+          ninja -C build -j$(sysctl -n hw.ncpu)
 
       # ===== 二进制处理 =====
-      - name: 去特征
+      - name: 去特征（Mach-O 安全版）
         run: |
           cd frida_src
 
-          SERVER=$(find build -name frida-server | head -n 1)
+          SERVER=$(find build -type f -name frida-server | grep -v "\.a$" | head -n 1)
+          [ -z "$SERVER" ] && echo "❌ server not found" && exit 1
+
           cp "$SERVER" sysmond
 
-          # ===== 等长替换（核心）=====
-          perl -pi -e 's/frida-server/sysmond____/g' sysmond
-          perl -pi -e 's/re\.frida\.server/re.core.server_/g' sysmond
-          
+          echo "==== BEFORE CHECK ===="
+          file sysmond || true
+          strings sysmond | grep -i frida || true
 
-          # ===== 端口（可选）=====
-          perl -pi -e 's/27042/39042/g' sysmond
-          perl -pi -e 's/27043/39043/g' sysmond
+          # ===== Mach-O 段级替换 =====
+          python3 <<'PY'
+import subprocess
+from collections import Counter
+
+BIN = "sysmond"
+
+out = subprocess.check_output(
+    "otool -l sysmond | awk '/sectname __cstring/{f=1} f&&/offset/{o=$2} f&&/size/{s=$2; print o,s; exit}'",
+    shell=True
+).decode().strip()
+
+if not out:
+    raise SystemExit("cstring not found")
+
+offset, size = map(int, out.split())
+
+with open(BIN, "rb") as f:
+    data = bytearray(f.read())
+
+segment = data[offset:offset+size]
+
+strings = []
+i = 0
+while i < len(segment):
+    if segment[i] == 0:
+        i += 1
+        continue
+    start = i
+    while i < len(segment) and segment[i] != 0:
+        i += 1
+    strings.append(bytes(segment[start:i]))
+
+counter = Counter(strings)
+
+print("==== candidates ====")
+for s in counter:
+    if b"frida" in s.lower():
+        print(s, "count=", counter[s])
+
+REPLACE_MAP = {
+    b"frida-server": b"sysmond____",
+    b"re.frida.server": b"re.core.server_",
+}
+
+for old, new in REPLACE_MAP.items():
+    if len(old) != len(new):
+        raise SystemExit("length mismatch")
+
+    if counter.get(old, 0) != 1:
+        print(f"skip {old}, count={counter.get(old,0)}")
+        continue
+
+    idx = segment.find(old)
+    if idx != -1:
+        segment[idx:idx+len(old)] = new
+        print(f"patched {old} -> {new}")
+
+data[offset:offset+size] = segment
+
+with open(BIN, "wb") as f:
+    f.write(data)
+
+print("==== patch done ====")
+PY
 
           chmod 755 sysmond
 
-          # ===== 精简（双保险）=====
+          # ===== 精简 =====
           strip -S sysmond || true
-          strip -x sysmond || true
 
-          # ===== 检测残留 =====
-          echo "==== check ===="
+          echo "==== AFTER CHECK ===="
           file sysmond || true
           strings sysmond | head -n 5 || true
           strings sysmond | grep -i frida || true
@@ -109,5 +175,5 @@ jobs:
       - name: 上传
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-final
+          name: frida-ios-${{ env.FRIDA_VERSION }}
           path: frida_src/*.deb
