@@ -1,4 +1,5 @@
 diff --git a/subprojects/frida-core/server/server.vala b/subprojects/frida-core/server/server.vala
+index 0000000..0000000 100644
 --- a/subprojects/frida-core/server/server.vala
 +++ b/subprojects/frida-core/server/server.vala
 @@ -1,6 +1,6 @@
@@ -7,21 +8,27 @@ diff --git a/subprojects/frida-core/server/server.vala b/subprojects/frida-core/
 -		public uint port { get; construct; default = 27042; }
 +		public uint port { get; construct; default = 27088; }
  		public string? address { get; construct; }
- 
+
  		public signal void expired ();
+
 diff --git a/subprojects/frida-gum/gum/gumjs/gumscriptbackend.c b/subprojects/frida-gum/gum/gumjs/gumscriptbackend.c
+index 0000000..0000000 100644
 --- a/subprojects/frida-gum/gum/gumjs/gumscriptbackend.c
 +++ b/subprojects/frida-gum/gum/gumjs/gumscriptbackend.c
 @@ -50,7 +50,7 @@
 -      "gum-js-loop",
 +      "core-js-loop",
+
 diff --git a/subprojects/frida-gum/gum/backend-darwin/gummemory-darwin.c b/subprojects/frida-gum/gum/backend-darwin/gummemory-darwin.c
+index 0000000..0000000 100644
 --- a/subprojects/frida-gum/gum/backend-darwin/gummemory-darwin.c
 +++ b/subprojects/frida-gum/gum/backend-darwin/gummemory-darwin.c
 @@ -37,7 +37,7 @@
 -  "frida-agent.dylib",
 +  "internal-agent.dylib",
+
 diff --git a/subprojects/frida-core/lib/base/session.vala b/subprojects/frida-core/lib/base/session.vala
+index 0000000..0000000 100644
 --- a/subprojects/frida-core/lib/base/session.vala
 +++ b/subprojects/frida-core/lib/base/session.vala
 @@ -1,6 +1,6 @@
