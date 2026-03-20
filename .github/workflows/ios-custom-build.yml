@@ -15,7 +15,8 @@ jobs:
       - name: Setup Environment
         run: |
           brew install meson ninja pkg-config dpkg
-          python3 -m pip install --upgrade pip setuptools wheel --break-system-packages
+          # 移除 --upgrade pip，直接安装必要构建工具，避免 Homebrew 冲突
+          python3 -m pip install setuptools wheel --break-system-packages
 
       - name: Patch Features
         run: |
