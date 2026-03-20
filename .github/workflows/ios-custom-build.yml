@@ -3,30 +3,31 @@ on: workflow_dispatch
 
 jobs:
   build-ios:
-    runs-on: macos-13
+    runs-on: macos-14
 
     env:
       FRIDA_NAME: internald
       PIPE_NAME: core-js-loop
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           ref: "16.6.6"
           submodules: recursive
 
-      - name: Init
+      - name: Init submodules
         run: git submodule update --init --recursive
 
-      - name: Patch (Minimal Safe)
+      - name: Patch (Minimal & Safe)
         run: |
           set -e
 
-          echo "[*] Patch pipe name (轻度特征规避)"
+          echo "[*] Patch pipe name"
           grep -rl "gum-js-loop" subprojects | \
           xargs sed -i '' "s/gum-js-loop/${PIPE_NAME}/g" || true
 
-          echo "[*] Patch visible server name（只改显示，不动协议）"
+          echo "[*] Patch visible server name"
           sed -i '' "s/frida-server/${FRIDA_NAME}/g" \
             subprojects/frida-core/server/*.vala || true
 
@@ -35,20 +36,21 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Build
+      - name: Build iOS arm64
         run: |
           make clean
           make ios-arm64
 
-      - name: Strip (减特征 + 体积)
-        run: strip build/frida-ios-arm64/bin/frida-server || true
+      - name: Strip binary
+        run: |
+          strip build/frida-ios-arm64/bin/frida-server || true
 
-      - name: Rename binary（关键）
+      - name: Rename binary
         run: |
           mv build/frida-ios-arm64/bin/frida-server \
              build/frida-ios-arm64/bin/${FRIDA_NAME}
 
-      - name: Upload
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: frida-ios-usb-safe
