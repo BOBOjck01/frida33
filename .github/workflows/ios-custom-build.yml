@@ -1,4 +1,4 @@
-name: Build Frida iOS Stealth (Fast + Stable)
+name: Build Frida iOS Stealth (USB Only)
 
 on:
   workflow_dispatch:
@@ -10,50 +10,51 @@ jobs:
     env:
       FRIDA_VERSION: 16.6.6
       FRIDA_NAME: internald
-      PORT: 27088
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      PORT: 0   # 关键：禁 TCP
 
     steps:
-      # ===== 缓存 =====
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: .ccache
-          key: frida-ccache-${{ runner.os }}-${{ env.FRIDA_VERSION }}
-
       # ===== 源码 =====
-      - name: Checkout (full + stable)
+      - name: Checkout
         run: |
           git clone https://github.com/frida/frida.git frida_src
           cd frida_src
-
           git fetch --tags
           git checkout $FRIDA_VERSION
-
           git submodule sync
           git submodule update --init --recursive
 
-      - name: Prepare
-        run: |
-          brew install ccache ninja || true
-          echo 'export PATH="/opt/homebrew/opt/ccache/libexec:$PATH"' >> ~/.zshrc
-
-      # ===== stealth =====
+      # ===== stealth + USB only =====
       - name: Apply stealth
         run: |
           cd frida_src
 
-          sed -i '' "s/default = 27042/default = $PORT/" \
-          subprojects/frida-core/server/server.vala
+          # ===== 禁 TCP（最关键）=====
+          sed -i '' 's/default = 27042/default = 0/' \
+          subprojects/frida-core/server/server.vala || true
 
-          sed -i '' 's/gum-js-loop/core-js-loop/' \
-          subprojects/frida-gum/gum/gumjs/gumscriptbackend.c
+          # ===== JS loop =====
+          FILES=$(grep -rIl "gum-js-loop" subprojects || true)
+          for f in $FILES; do
+            sed -i '' 's/gum-js-loop/core-js-loop/g' "$f"
+          done
 
-          sed -i '' 's/frida-agent.dylib/internal-agent.dylib/' \
-          subprojects/frida-gum/gum/backend-darwin/gummemory-darwin.c
+          # ===== agent 名 =====
+          FILES=$(grep -rIl "frida-agent.dylib" subprojects || true)
+          for f in $FILES; do
+            sed -i '' 's/frida-agent.dylib/internal-agent.dylib/g' "$f"
+          done
 
-          sed -i '' 's/default = "frida"/default = "core"/' \
-          subprojects/frida-core/lib/base/session.vala
+          # ===== session tag =====
+          FILES=$(grep -rIl 'default = "frida"' subprojects || true)
+          for f in $FILES; do
+            sed -i '' 's/default = "frida"/default = "core"/g' "$f"
+          done
+
+          # ===== 强制禁 TCP（双保险）=====
+          FILES=$(grep -rIl "listen_on_tcp" subprojects/frida-core || true)
+          for f in $FILES; do
+            sed -i '' 's/listen_on_tcp (/\/\/listen_on_tcp (/g' "$f"
+          done
 
       # ===== arm64 =====
       - name: Build arm64
@@ -94,7 +95,7 @@ jobs:
           DESTDIR=build-arm64e make install
 
       # ===== 合并 =====
-      - name: Merge
+      - name: Merge universal
         run: |
           cd frida_src
 
@@ -115,7 +116,7 @@ jobs:
           codesign -f -s "-" final/usr/lib/frida/internal-agent.dylib
 
       # ===== deb =====
-      - name: Package deb
+      - name: Package DEB
         run: |
           cd frida_src
 
@@ -131,7 +132,7 @@ jobs:
           Name: internald
           Version: $FRIDA_VERSION
           Architecture: iphoneos-arm
-          Description: stealth frida server
+          Description: stealth frida (usb only)
           Maintainer: you
           Section: Development
           EOF
@@ -141,5 +142,5 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-stealth
+          name: frida-ios-usb-only
           path: frida_src/frida-stealth.deb
