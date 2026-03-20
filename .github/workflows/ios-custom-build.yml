@@ -1,68 +1,107 @@
-name: Build Custom Frida iOS 16.2.1 (Perfect & USB Safe)
+name: Build Custom Frida iOS (Stable Stealth)
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
 
 jobs:
   build-ios:
     runs-on: macos-14
+
     env:
+      FRIDA_VERSION: 16.2.1
       FRIDA_NAME: internald
 
     steps:
       - name: Clone Frida
-        run: git clone --recurse-submodules --depth 1 --branch 16.2.1 https://github.com/frida/frida.git .
+        run: |
+          git clone --recurse-submodules --depth 1 --branch ${FRIDA_VERSION} https://github.com/frida/frida.git .
 
       - name: Setup Environment
         run: |
           brew install meson ninja pkg-config dpkg
-          python3 -m pip install setuptools wheel --break-system-packages
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install meson ninja setuptools wheel
 
-      - name: Patch Features
+      - name: Patch (Stealth)
         run: |
           set -e
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' 's/gum-js-loop/core-js-loop/g' {} + || true
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' 's/pool-frida/pool-core/g' {} + || true
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' 's/27042/27088/g' {} + || true
 
-          find subprojects/frida-core/server -name "*.vala" -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
+          # 特征字符串
+          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
+            -exec sed -i '' 's/gum-js-loop/core-js-loop/g' {} + || true
+
+          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
+            -exec sed -i '' 's/pool-frida/pool-core/g' {} + || true
+
+          # 端口修改
+          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
+            -exec sed -i '' 's/27042/27088/g' {} + || true
 
       - name: Build
         run: |
-          # 16.2+ 直接使用基础架构 target 即可
-          make ios-arm64
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          make ios-arm64e
+          set -e
+          source venv/bin/activate
 
-      - name: Package DEBs
+          # arm64
+          meson setup build-arm64 \
+            --cross-file=releng/meson/ios-arm64.txt \
+            -Dserver=true \
+            -Dgumjs=enabled \
+            -Doptimization=s
+
+          meson compile -C build-arm64
+
+          # arm64e（部分环境可能失败，允许跳过）
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+
+          meson setup build-arm64e \
+            --cross-file=releng/meson/ios-arm64e.txt \
+            -Dserver=true \
+            -Dgumjs=enabled \
+            -Doptimization=s || true
+
+          meson compile -C build-arm64e || true
+
+      - name: Package DEB
         run: |
           set -e
+
           for arch in arm64 arm64e; do
-            mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
-            
-            # 使用 find 动态定位产物，规避不同版本输出路径不同的问题 (极度健壮)
-            SERVER_PATH=$(find build/frida-ios-$arch -name "frida-server" -type f | head -n 1)
-            AGENT_PATH=$(find build/frida-ios-$arch -name "frida-agent.dylib" -type f | head -n 1)
-            
+            BUILD_DIR=build-$arch
+
+            SERVER_PATH=$(find $BUILD_DIR -name "frida-server" -type f | head -n 1)
+            AGENT_PATH=$(find $BUILD_DIR -name "frida-agent.dylib" -type f | head -n 1)
+
+            if [ -z "$SERVER_PATH" ]; then
+              echo "Skip $arch (no build)"
+              continue
+            fi
+
+            mkdir -p deb-$arch/DEBIAN
+            mkdir -p deb-$arch/usr/sbin
+            mkdir -p deb-$arch/usr/lib/frida
+
             cp "$SERVER_PATH" deb-$arch/usr/sbin/${FRIDA_NAME}
             cp "$AGENT_PATH" deb-$arch/usr/lib/frida/
-            
+
             strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
             cat > deb-$arch/DEBIAN/control <<-EOF
-          Package: com.custom.${FRIDA_NAME}.${arch}
-          Name: ${FRIDA_NAME} (${arch})
-          Version: 16.2.1
-          Architecture: iphoneos-arm
-          Description: Custom Frida (USB Safe)
-          Maintainer: Dev
-          EOF
-            
+Package: com.custom.${FRIDA_NAME}.${arch}
+Name: ${FRIDA_NAME}
+Version: ${FRIDA_VERSION}
+Architecture: iphoneos-arm
+Description: Custom Frida (Stealth)
+Maintainer: Dev
+EOF
+
             dpkg-deb -b deb-$arch ${FRIDA_NAME}_${arch}.deb
           done
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-16.2.1-usb-safe
+          name: frida-ios-${{ env.FRIDA_VERSION }}-stealth
           path: "*.deb"
