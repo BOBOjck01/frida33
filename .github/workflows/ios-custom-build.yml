@@ -40,9 +40,11 @@ jobs:
 
       # ===== 只编 server =====
       - name: 编译（仅 server）
+        env:
+          IOS_CERTID: "-"
         run: |
           cd frida_src
-          ninja -C build frida-server
+          ninja -C build
 
       # ===== 安装 dpkg =====
       - name: 安装 dpkg
