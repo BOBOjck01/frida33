@@ -1,4 +1,4 @@
-name: Build Frida iOS (ARM64 Stable Final)
+name: Build Frida iOS (ARM64 Dual Package Stable)
 
 on:
   workflow_dispatch:
@@ -25,6 +25,17 @@ jobs:
           cd frida_src
           rm -rf build
 
+      # ✅ 精准裁剪（安全）
+      - name: Precise trim
+        run: |
+          cd frida_src
+
+          grep -rIl "frida-server" subprojects | xargs -I{} sed -i '' 's/frida-server/internald/g' "{}" || true
+          grep -rIl "re.frida.server" subprojects | xargs -I{} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
+          grep -rIl "frida-agent" subprojects | xargs -I{} sed -i '' 's/frida-agent/core-agent/g' "{}" || true
+
+          sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent || true
+
       - name: Configure
         run: |
           cd frida_src
@@ -32,24 +43,31 @@ jobs:
           ./configure \
             --prefix=/usr \
             --host=ios-arm64 \
-            --enable-portal
+            --enable-portal \
+            --disable-frida-python \
+            --disable-frida-node \
+            --disable-frida-swift \
+            --disable-frida-qml \
+            --disable-frida-tools \
+            --disable-frida-clr
 
       - name: Build
         run: |
           cd frida_src
           ninja -C build
 
+      - name: Strip
+        run: |
+          cd frida_src
+          find build -type f -perm +111 -exec strip -S {} \; || true
+
       - name: Install dpkg
         run: |
           brew install dpkg
 
-      - name: Package
+      - name: Package (dual)
         run: |
           cd frida_src
-
-          mkdir -p pkg/DEBIAN
-          mkdir -p pkg/usr/bin
-          mkdir -p pkg/usr/lib/frida
 
           SERVER_PATH=$(find build -name frida-server | head -n 1)
           AGENT_PATH=$(find build -name frida-agent.dylib | head -n 1)
@@ -61,26 +79,38 @@ jobs:
           fi
 
           echo "Using server: $SERVER_PATH"
-          cp "$SERVER_PATH" pkg/usr/bin/frida-server
 
+          # ================= ARM 包 =================
+          rm -rf pkg
+          mkdir -p pkg/DEBIAN
+          mkdir -p pkg/usr/bin
+          mkdir -p pkg/usr/lib/frida
+
+          cp "$SERVER_PATH" pkg/usr/bin/internald
           [ -f "$AGENT_PATH" ] && cp "$AGENT_PATH" pkg/usr/lib/frida/ || true
           [ -f "$HELPER_PATH" ] && cp "$HELPER_PATH" pkg/usr/lib/frida/ || true
 
           cat > pkg/DEBIAN/control <<EOF
-          Package: re.frida.server
-          Name: frida-server
+          Package: re.core.server
+          Name: internald
           Version: $FRIDA_VERSION
-          Architecture: iphoneos-arm64
-          Description: Frida server
-          Maintainer: frida
+          Architecture: iphoneos-arm
+          Description: system daemon
+          Maintainer: system
           Section: Development
           Depends: firmware (>= 12.0)
           EOF
 
-          dpkg-deb -b pkg frida.deb
+          dpkg-deb -b pkg frida-arm.deb
+
+          # ================= ARM64 包 =================
+          sed -i '' 's/iphoneos-arm/iphoneos-arm64/g' pkg/DEBIAN/control
+          dpkg-deb -b pkg frida-arm64.deb
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-arm64
-          path: frida_src/frida.deb
+          name: frida-ios-dual
+          path: |
+            frida_src/frida-arm.deb
+            frida_src/frida-arm64.deb
