@@ -1,6 +1,7 @@
-name: Build Frida
+name: Build Frida iOS 16.2.1 (arm + arm64e)
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
 
 jobs:
   build-ios:
@@ -11,57 +12,48 @@ jobs:
       PORT_NUMBER: "27088"
 
     steps:
-      # 1. 官方源码
-      - name: Clone
+      - name: Clone Frida
         run: |
           git clone https://github.com/frida/frida.git .
           git fetch --tags
           git checkout 16.2.1
           git submodule update --init --recursive
 
-      # 2. 依赖
       - name: Install deps
         run: |
           brew install meson ninja pkg-config dpkg
           python3 -m pip install --upgrade pip setuptools wheel
 
-      # 3. Patch（最小）
       - name: Patch
         run: |
           sed -i '' "s/27042/${PORT_NUMBER}/g" subprojects/frida-core/lib/base/rpc.vala || true
-          find subprojects/frida-core/server -name "*.vala" \
-            -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
+          find subprojects/frida-core/server -name "*.vala" -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
 
-      # 4️⃣ 编译 arm64
       - name: Build arm64
         run: |
           make clean || true
           export FRIDA_IOS_ARCHS="arm64"
           make core-ios
-
           mv build build-arm64
 
-      # 5️⃣ 编译 arm64e（强制）
       - name: Build arm64e
         run: |
           make clean || true
-
           export FRIDA_IOS_ARCHS="arm64e"
           export CFLAGS="-arch arm64e"
           export CXXFLAGS="-arch arm64e"
           export LDFLAGS="-arch arm64e"
-
           make core-ios
-
           mv build build-arm64e
 
-      # 6️⃣ 打包
       - name: Package
         run: |
           for arch in arm64 arm64e; do
             BUILD_DIR="build-$arch/frida-ios"
 
-            mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
+            mkdir -p deb-$arch/DEBIAN
+            mkdir -p deb-$arch/usr/sbin
+            mkdir -p deb-$arch/usr/lib/frida
 
             cp $BUILD_DIR/bin/frida-server deb-$arch/usr/sbin/${FRIDA_NAME}
             cp $BUILD_DIR/lib/frida/frida-agent.dylib deb-$arch/usr/lib/frida/frida-agent.dylib
@@ -69,21 +61,18 @@ jobs:
             strip deb-$arch/usr/sbin/${FRIDA_NAME}
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
-            cat > deb-$arch/DEBIAN/control <<EOF
-Package: com.custom.${FRIDA_NAME}.$arch
-Name: ${FRIDA_NAME} ($arch)
-Version: 16.2.1
-Architecture: arm64
-Description: Frida 16.2.1 ($arch)
-Maintainer: Developer
-EOF
+            echo "Package: com.custom.${FRIDA_NAME}.$arch" > deb-$arch/DEBIAN/control
+            echo "Name: ${FRIDA_NAME} ($arch)" >> deb-$arch/DEBIAN/control
+            echo "Version: 16.2.1" >> deb-$arch/DEBIAN/control
+            echo "Architecture: arm64" >> deb-$arch/DEBIAN/control
+            echo "Description: Frida 16.2.1 ($arch)" >> deb-$arch/DEBIAN/control
+            echo "Maintainer: Developer" >> deb-$arch/DEBIAN/control
 
             dpkg-deb -b deb-$arch ${FRIDA_NAME}_$arch.deb
           done
 
-      # 7. 上传
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-dual
+          name: frida-ios-16.2.1
           path: "*.deb"
