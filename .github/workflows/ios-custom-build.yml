@@ -9,42 +9,33 @@ jobs:
 
     steps:
       - name: Checkout Frida
+        # 使用完整克隆并递归子模块，确保所有目录都在
         run: |
-          git clone --recurse-submodules --depth 1 --branch 16.2.1 https://github.com/frida/frida.git .
+          git clone --recurse-submodules --branch 16.2.1 https://github.com/frida/frida.git .
 
       - name: Setup Environment
         run: |
           brew install meson ninja pkg-config dpkg
-          python3 -m venv venv
-          source venv/bin/activate
-          pip install meson ninja setuptools wheel
+          # 官方构建通常需要这些环境
+          python3 -m pip install setuptools wheel
 
-      - name: Build arm64
+      - name: Build iOS Arm64
         run: |
-          source venv/bin/activate
-          cd subprojects/frida-core
-          # 使用官方提供的 cross-file
-          meson setup build-arm64 --cross-file=releng/ios/ios-arm64.txt -Dserver=true -Doptimization=s
-          meson compile -C build-arm64
+          # 直接使用根目录的 make，这是最稳的入口
+          # 它会自动下载需要的预编译 SDK 并处理所有 subprojects 路径
+          make ios-arm64
 
-      - name: Build arm64e
+      - name: Build iOS Arm64e
         run: |
-          source venv/bin/activate
-          cd subprojects/frida-core
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          meson setup build-arm64e --cross-file=releng/ios/ios-arm64e.txt -Dserver=true -Doptimization=s || true
-          meson compile -C build-arm64e || true
+          # 针对新芯片的架构
+          make ios-arm64e || true
 
       - name: Collect Binaries
         run: |
-          mkdir -p output/arm64 output/arm64e
-          
-          # 提取编译好的二进制文件
-          find subprojects/frida-core/build-arm64 -name "frida-server" -exec cp {} output/arm64/ \;
-          find subprojects/frida-core/build-arm64 -name "frida-agent.dylib" -exec cp {} output/arm64/ \;
-          
-          find subprojects/frida-core/build-arm64e -name "frida-server" -exec cp {} output/arm64e/ \; || true
-          find subprojects/frida-core/build-arm64e -name "frida-agent.dylib" -exec cp {} output/arm64e/ \; || true
+          mkdir -p output
+          # 官方构建后的产物固定在 build 目录下
+          find build/ -name "frida-server" -exec cp {} output/ \;
+          find build/ -name "frida-agent.dylib" -exec cp {} output/ \;
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
