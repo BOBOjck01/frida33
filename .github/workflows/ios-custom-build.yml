@@ -1,4 +1,4 @@
-name: Build Frida iOS (Stable + USB Only + Dual)
+name: Build Frida iOS (ARM64 Stable + Safe Stealth)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,6 @@ jobs:
 
     env:
       FRIDA_VERSION: "16.6.6"
-      IOS_CERTID: "-"
 
     steps:
       - name: Checkout
@@ -25,24 +24,14 @@ jobs:
           cd frida_src
           rm -rf build
 
-      # ✅ 轻量精准裁剪（稳定）
-      - name: Safe trim
+      # ✅ 只做安全隐匿（不会炸）
+      - name: Safe stealth
         run: |
           cd frida_src
 
+          # 仅改 server 名
           grep -rIl "frida-server" subprojects | xargs -I{} sed -i '' 's/frida-server/internald/g' "{}" || true
-          grep -rIl "frida-agent" subprojects | xargs -I{} sed -i '' 's/frida-agent/core-agent/g' "{}" || true
-          grep -rIl "frida-helper" subprojects | xargs -I{} sed -i '' 's/frida-helper/core-helper/g' "{}" || true
-
-          sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent || true
-
-      # ✅ 关闭端口（USB only）
-      - name: Disable TCP
-        run: |
-          cd frida_src
-
-          sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala || true
-          sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala || true
+          grep -rIl "re.frida.server" subprojects | xargs -I{} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
 
       - name: Configure
         run: |
@@ -60,11 +49,10 @@ jobs:
           cd frida_src
           ninja -C build
 
-      # ✅ 减体积
       - name: Strip
         run: |
           cd frida_src
-          find build -type f -perm -111 -exec strip -S {} \; || true
+          find build -type f -perm +111 -exec strip -S {} \; || true
 
       - name: Install dpkg
         run: |
@@ -83,13 +71,9 @@ jobs:
             exit 1
           fi
 
-          echo "Using server: $SERVER_PATH"
-
-          # ========= ARM（iOS14 Cydia）=========
+          # ===== ARM 包（给 iOS 14 / Cydia）=====
           rm -rf pkg
-          mkdir -p pkg/DEBIAN
-          mkdir -p pkg/usr/bin
-          mkdir -p pkg/usr/lib/frida
+          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/usr/lib/frida
 
           cp "$SERVER_PATH" pkg/usr/bin/internald
           [ -f "$AGENT_PATH" ] && cp "$AGENT_PATH" pkg/usr/lib/frida/ || true
@@ -108,14 +92,14 @@ jobs:
 
           dpkg-deb -b pkg frida-arm.deb
 
-          # ========= ARM64（iOS16 rootless）=========
-          sed -i '' 's/^Architecture: iphoneos-arm$/Architecture: iphoneos-arm64/' pkg/DEBIAN/control
+          # ===== ARM64 包（给 iOS 16 / rootless）=====
+          sed -i '' 's/iphoneos-arm/iphoneos-arm64/g' pkg/DEBIAN/control
           dpkg-deb -b pkg frida-arm64.deb
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-final
+          name: frida-ios-dual
           path: |
             frida_src/frida-arm.deb
             frida_src/frida-arm64.deb
