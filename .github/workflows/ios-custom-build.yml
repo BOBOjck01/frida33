@@ -34,7 +34,6 @@ jobs:
             --prefix=/usr \
             --host=ios-arm64 \
             --enable-server \
-            --disable-portal \
             --disable-inject \
             --disable-gadget \
             --disable-frida-python \
