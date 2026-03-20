@@ -1,78 +1,80 @@
-name: Build Frida iOS 16.2.1 (arm + arm64e)
+name: Build Custom Frida iOS 16.2.1 (Perfect & USB Safe)
 
-on:
-  workflow_dispatch:
+on: workflow_dispatch
 
 jobs:
   build-ios:
     runs-on: macos-14
-
     env:
       FRIDA_NAME: internald
-      PORT_NUMBER: "27088"
 
     steps:
+      # 1. 放弃官方 action，使用原生 git 确保子模块 100% 完整
       - name: Clone Frida
         run: |
-          git clone https://github.com/frida/frida.git .
-          git fetch --tags
-          git checkout 16.2.1
-          git submodule update --init --recursive
+          git clone --recurse-submodules --depth 1 --branch 16.2.1 https://github.com/frida/frida.git .
 
-      - name: Install deps
+      # 2. 极简环境准备
+      - name: Setup Environment
         run: |
           brew install meson ninja pkg-config dpkg
           python3 -m pip install --upgrade pip setuptools wheel
 
-      - name: Patch
+      # 3. 安全 Patch (仅修改本地特征，保留 USB 通信协议)
+      - name: Patch Features
         run: |
-          sed -i '' "s/27042/${PORT_NUMBER}/g" subprojects/frida-core/lib/base/rpc.vala || true
-          find subprojects/frida-core/server -name "*.vala" -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
+          set -e
+          echo "[*] 修改基础特征..."
+          # 限定源码文件扩展名，绝对不会破坏二进制或卡死
+          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' 's/gum-js-loop/core-js-loop/g' {} +
+          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' 's/pool-frida/pool-core/g' {} +
+          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' 's/27042/27088/g' {} +
 
-      - name: Build arm64
+          echo "[*] 修改 Server 进程名..."
+          find subprojects/frida-core/server -name "*.vala" -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} +
+
+      # 4. 编译双架构 (arm64 与 arm64e)
+      - name: Build
         run: |
-          make clean || true
-          export FRIDA_IOS_ARCHS="arm64"
-          make core-ios
-          mv build build-arm64
+          # 编译 arm64 (对应旧设备 A11 及以下)
+          make core-ios-arm64
+          
+          # 编译 arm64e (对应 A12+ 设备，iOS 16.x 必备)
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          make core-ios-arm64e
 
-      - name: Build arm64e
-        run: |
-          make clean || true
-          export FRIDA_IOS_ARCHS="arm64e"
-          export CFLAGS="-arch arm64e"
-          export CXXFLAGS="-arch arm64e"
-          export LDFLAGS="-arch arm64e"
-          make core-ios
-          mv build build-arm64e
-
-      - name: Package
+      # 5. 扁平化打包流程
+      - name: Package DEBs
         run: |
           for arch in arm64 arm64e; do
-            BUILD_DIR="build-$arch/frida-ios"
-
-            mkdir -p deb-$arch/DEBIAN
-            mkdir -p deb-$arch/usr/sbin
-            mkdir -p deb-$arch/usr/lib/frida
-
-            cp $BUILD_DIR/bin/frida-server deb-$arch/usr/sbin/${FRIDA_NAME}
-            cp $BUILD_DIR/lib/frida/frida-agent.dylib deb-$arch/usr/lib/frida/frida-agent.dylib
-
-            strip deb-$arch/usr/sbin/${FRIDA_NAME}
+            # 创建目录结构
+            mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
+            
+            # 拷贝产物 (注意：frida-agent 必须保持原名以兼容 USB 模式的注入)
+            cp build/frida-ios-$arch/bin/frida-server deb-$arch/usr/sbin/${FRIDA_NAME}
+            cp build/frida-ios-$arch/lib/frida/frida-agent.dylib deb-$arch/usr/lib/frida/
+            
+            # 瘦身并赋权
+            strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
-            echo "Package: com.custom.${FRIDA_NAME}.$arch" > deb-$arch/DEBIAN/control
-            echo "Name: ${FRIDA_NAME} ($arch)" >> deb-$arch/DEBIAN/control
-            echo "Version: 16.2.1" >> deb-$arch/DEBIAN/control
-            echo "Architecture: arm64" >> deb-$arch/DEBIAN/control
-            echo "Description: Frida 16.2.1 ($arch)" >> deb-$arch/DEBIAN/control
-            echo "Maintainer: Developer" >> deb-$arch/DEBIAN/control
-
+            # 写入控制文件
+            cat > deb-$arch/DEBIAN/control <<EOF
+          Package: com.custom.${FRIDA_NAME}.$arch
+          Name: ${FRIDA_NAME} ($arch)
+          Version: 16.2.1
+          Architecture: iphoneos-arm
+          Description: Custom Frida (USB Safe)
+          Maintainer: Dev
+          EOF
+            
+            # 生成 deb
             dpkg-deb -b deb-$arch ${FRIDA_NAME}_$arch.deb
           done
 
+      # 6. 一键输出
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-16.2.1
+          name: frida-ios-16.2.1-usb-safe
           path: "*.deb"
