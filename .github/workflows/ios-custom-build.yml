@@ -1,4 +1,4 @@
-name: Build Frida iOS Stealth (USB Only - Stable Medium)
+name: Build Frida iOS Stealth (ARM64 + Medium Stealth)
 
 on:
   workflow_dispatch:
@@ -20,21 +20,34 @@ jobs:
           git checkout tags/$FRIDA_VERSION
           git submodule update --init --recursive
 
-      - name: Apply stealth
+      - name: Apply stealth (medium)
         run: |
           cd frida_src
 
           # 关闭默认端口
           sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala || true
 
-          # 字符串混淆
+          # 禁止监听（USB only 强化）
+          sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala || true
+
+          # gum-js-loop -> core-js-loop
           grep -rIl "gum-js-loop" subprojects | xargs -I{} sed -i '' 's/gum-js-loop/core-js-loop/g' "{}" || true
+
+          # frida -> core
           grep -rIl 'default = "frida"' subprojects | xargs -I{} sed -i '' 's/default = "frida"/default = "core"/g' "{}" || true
+
+          # frida-agent -> core-agent
+          grep -rIl "frida-agent" subprojects | xargs -I{} sed -i '' 's/frida-agent/core-agent/g' "{}" || true
+
+          # gum 前缀弱化
+          grep -rIl "gum-" subprojects | xargs -I{} sed -i '' 's/gum-/core-/g' "{}" || true
 
           # helper 标识
           sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent || true
 
-      # ---------------- arm64 ----------------
+          # 进程名弱化（基础级）
+          grep -rIl "frida-server" subprojects | xargs -I{} sed -i '' 's/frida-server/internald/g' "{}" || true
+
       - name: Build arm64
         run: |
           cd frida_src
@@ -53,54 +66,10 @@ jobs:
           ninja -C build-arm64
           DESTDIR=build-arm64 ninja -C build-arm64 install
 
-      # ---------------- arm64e ----------------
-      - name: Build arm64e
-        run: |
-          cd frida_src
+          # strip 符号
+          strip -S build-arm64/usr/bin/frida-server || true
 
-          ./configure \
-            --prefix=/usr \
-            --host=ios-arm64e \
-            --enable-portal \
-            --builddir=build-arm64e \
-            -- \
-            -Dfrida-gum:devkits=gum,gumjs \
-            -Dfrida-core:compiler_backend=disabled \
-            -Dfrida-core:assets=installed \
-            -Dfrida-core:devkits=core
-
-          ninja -C build-arm64e
-          DESTDIR=build-arm64e ninja -C build-arm64e install
-
-      # ---------------- 合并 ----------------
-      - name: Merge universal
-        run: |
-          cd frida_src
-
-          mkdir -p final/usr/bin
-          mkdir -p final/usr/lib/frida
-
-          lipo \
-            build-arm64/usr/bin/frida-server \
-            build-arm64e/usr/bin/frida-server \
-            -create -output final/usr/bin/$FRIDA_NAME
-
-          lipo \
-            build-arm64/usr/lib/frida/frida-agent.dylib \
-            build-arm64e/usr/lib/frida/frida-agent.dylib \
-            -create -output final/usr/lib/frida/frida-agent.dylib
-
-          lipo \
-            build-arm64/usr/lib/frida/frida-helper \
-            build-arm64e/usr/lib/frida/frida-helper \
-            -create -output final/usr/lib/frida/frida-helper
-
-          strip -x final/usr/bin/$FRIDA_NAME || true
-          strip -x final/usr/lib/frida/frida-agent.dylib || true
-          strip -x final/usr/lib/frida/frida-helper || true
-
-      # ---------------- 打包 ----------------
-      - name: Package DEB
+      - name: Package DEBs
         run: |
           cd frida_src
 
@@ -108,10 +77,11 @@ jobs:
           mkdir -p pkg/usr/bin
           mkdir -p pkg/usr/lib/frida
 
-          cp final/usr/bin/$FRIDA_NAME pkg/usr/bin/
-          cp final/usr/lib/frida/frida-agent.dylib pkg/usr/lib/frida/
-          cp final/usr/lib/frida/frida-helper pkg/usr/lib/frida/
+          cp build-arm64/usr/bin/frida-server pkg/usr/bin/$FRIDA_NAME
+          cp build-arm64/usr/lib/frida/frida-agent.dylib pkg/usr/lib/frida/
+          cp build-arm64/usr/lib/frida/frida-helper pkg/usr/lib/frida/
 
+          # -------- 包1：iphoneos-arm --------
           cat > pkg/DEBIAN/control <<EOF
           Package: com.core.internald
           Name: internald
@@ -123,10 +93,17 @@ jobs:
           Depends: firmware (>= 12.0)
           EOF
 
-          dpkg-deb -b pkg frida-stealth.deb
+          dpkg-deb -b pkg frida-arm.deb
+
+          # -------- 包2：iphoneos-arm64 --------
+          sed -i '' 's/iphoneos-arm/iphoneos-arm64/g' pkg/DEBIAN/control
+
+          dpkg-deb -b pkg frida-arm64.deb
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-usb-only
-          path: frida_src/frida-stealth.deb
+          name: frida-ios-stealth
+          path: |
+            frida_src/frida-arm.deb
+            frida_src/frida-arm64.deb
