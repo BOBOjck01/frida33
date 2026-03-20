@@ -15,7 +15,6 @@ jobs:
       - name: Setup Environment
         run: |
           brew install meson ninja pkg-config dpkg
-          # 移除 --upgrade pip，直接安装必要构建工具，避免 Homebrew 冲突
           python3 -m pip install setuptools wheel --break-system-packages
 
       - name: Patch Features
@@ -29,9 +28,11 @@ jobs:
 
       - name: Build
         run: |
-          make core-ios-arm64
+          # 修正为正确的 Makefile target
+          make server-ios-arm64
+          
           export MACOSX_DEPLOYMENT_TARGET=11.0
-          make core-ios-arm64e
+          make server-ios-arm64e
 
       - name: Package DEBs
         run: |
