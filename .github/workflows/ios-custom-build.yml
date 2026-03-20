@@ -1,4 +1,4 @@
-name: Build Frida iOS ARM64 (FINAL FIXED)
+name: Build Frida iOS ARM64 ONLY (NO ARM64E FINAL)
 
 on:
   workflow_dispatch:
@@ -20,24 +20,23 @@ jobs:
           git checkout tags/$FRIDA_VERSION
           git submodule update --init --recursive
 
-      - name: Apply patch
+      - name: Patch (核心修复)
         run: |
           cd frida_src
           set +e
 
-          # 关闭端口监听
+          # ---------- 1. 禁止监听 ----------
           sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala
           sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala
 
-          # 字符串混淆（安全）
-          grep -rIl "gum-js-loop" subprojects | xargs -I{} sed -i '' 's/gum-js-loop/core-js-loop/g' "{}"
-          grep -rIl 'default = "frida"' subprojects | xargs -I{} sed -i '' 's/default = "frida"/default = "core"/g' "{}"
+          # ---------- 2. 去 arm64e ----------
+          sed -i '' 's/"arm64", "arm64e"/"arm64"/g' subprojects/frida-core/compat/build.py
 
-          # helper 标识
-          sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent
+          # ---------- 3. 干掉 codesign ----------
+          grep -rIl "codesign" subprojects | xargs -I{} sed -i '' 's|/usr/bin/codesign|true|g' "{}"
 
-          # ✅ 正确禁用 codesign（不会破坏 Python）
-          sed -i '' 's|/usr/bin/codesign|true|g' subprojects/frida-core/tools/post-process.py
+          # ---------- 4. 跳过 cert 校验 ----------
+          sed -i '' 's/if certid is None:/if False:/g' subprojects/frida-core/tools/post-process.py
 
           set -e
 
@@ -64,9 +63,9 @@ jobs:
         run: |
           cd frida_src
 
-          ninja -C build || make -j$(sysctl -n hw.ncpu)
+          ninja -C build
 
-          DESTDIR=build-arm64 ninja -C build install || DESTDIR=build-arm64 make install
+          DESTDIR=build-arm64 ninja -C build install
 
           strip -S build-arm64/usr/bin/frida-server || true
 
@@ -87,7 +86,7 @@ jobs:
           Name: internald
           Version: $FRIDA_VERSION
           Architecture: iphoneos-arm64
-          Description: stealth frida
+          Description: stealth frida arm64 only
           Maintainer: you
           Section: Development
           Depends: firmware (>= 12.0)
@@ -98,5 +97,5 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios
+          name: frida-ios-arm64-only
           path: frida_src/frida-arm64.deb
