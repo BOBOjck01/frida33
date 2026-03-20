@@ -1,4 +1,4 @@
-name: 构建 Frida iOS（稳定版 + 安全隐匿 + USB Only + 双架构包）
+name: 构建 Frida iOS（极简稳定 + USB Only + 双架构）
 
 on:
   workflow_dispatch:
@@ -11,8 +11,8 @@ jobs:
       FRIDA_VERSION: "16.6.6"
 
     steps:
-      # ===== 拉取源码 =====
-      - name: 拉取 Frida 源码
+      # ===== 拉源码 =====
+      - name: 拉取源码
         run: |
           git clone https://github.com/frida/frida.git frida_src
           cd frida_src
@@ -21,77 +21,57 @@ jobs:
           git submodule update --init --recursive
 
       # ===== 清理 =====
-      - name: 清理旧构建
+      - name: 清理
         run: |
           cd frida_src
           rm -rf build
 
-      # ===== 配置 =====
-      - name: 配置编译参数
+      # ===== 配置（极简）=====
+      - name: 配置
         run: |
           cd frida_src
-
           ./configure \
             --prefix=/usr \
             --host=ios-arm64 \
-            --enable-portal \
+            --enable-server \
+            --disable-portal \
+            --disable-inject \
+            --disable-gadget \
             --disable-frida-python \
             --disable-frida-tools
 
-      # ===== 编译 =====
-      - name: 编译 Frida
+      # ===== 只编 server =====
+      - name: 编译（仅 server）
         run: |
           cd frida_src
-          ninja -C build
+          ninja -C build frida-server
 
       # ===== 安装 dpkg =====
       - name: 安装 dpkg
-        run: |
-          brew install dpkg
+        run: brew install dpkg
 
       # ===== 打包 =====
-      - name: 打包（USB Only + 安全隐匿 + 双架构）
+      - name: 打包（双架构 + 隐匿）
         run: |
           cd frida_src
 
-          # ---------- 查找产物 ----------
           SERVER_PATH=$(find build -name frida-server | head -n 1)
-          AGENT_PATH=$(find build -name frida-agent.dylib | head -n 1)
-          HELPER_PATH=$(find build -name frida-helper | head -n 1)
+          [ -z "$SERVER_PATH" ] && echo "❌ no server" && exit 1
 
-          if [ -z "$SERVER_PATH" ]; then
-            echo "❌ frida-server not found"
-            exit 1
-          fi
-
-          echo "Using server: $SERVER_PATH"
-
-          # =========================================================
-          # ✅ 二进制安全隐匿（仅改核心，不破坏结构）
-          # =========================================================
+          # ===== 二进制处理 =====
           cp "$SERVER_PATH" internald
 
           perl -pi -e 's/frida-server/internald/g' internald
           perl -pi -e 's/re\.frida\.server/re.core.server/g' internald
-          perl -pi -e 's/gum-js-loop/core-js-loop/g' internald
 
-          # 精简
           strip -S internald || true
           strip -x internald || true
 
-          # 可选检查
-          echo "==== check frida ===="
-          strings internald | grep -i frida || true
-
-          # =========================================================
-          # 📦 ARM 包（iOS 14 / Cydia）
-          # =========================================================
+          # ===== ARM（iOS14）=====
           rm -rf pkg
-          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/usr/lib/frida
+          mkdir -p pkg/DEBIAN pkg/usr/bin
 
           cp internald pkg/usr/bin/internald
-          [ -f "$AGENT_PATH" ] && cp "$AGENT_PATH" pkg/usr/lib/frida/ || true
-          [ -f "$HELPER_PATH" ] && cp "$HELPER_PATH" pkg/usr/lib/frida/ || true
 
           cat > pkg/DEBIAN/control <<EOF
           Package: re.core.server
@@ -106,15 +86,11 @@ jobs:
 
           dpkg-deb -b pkg frida-arm.deb
 
-          # =========================================================
-          # 📦 ARM64 包（iOS 16 / rootless）
-          # =========================================================
+          # ===== ARM64（iOS16）=====
           rm -rf pkg
-          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/usr/lib/frida
+          mkdir -p pkg/DEBIAN pkg/usr/bin
 
           cp internald pkg/usr/bin/internald
-          [ -f "$AGENT_PATH" ] && cp "$AGENT_PATH" pkg/usr/lib/frida/ || true
-          [ -f "$HELPER_PATH" ] && cp "$HELPER_PATH" pkg/usr/lib/frida/ || true
 
           cat > pkg/DEBIAN/control <<EOF
           Package: re.core.server
@@ -130,10 +106,10 @@ jobs:
           dpkg-deb -b pkg frida-arm64.deb
 
       # ===== 上传 =====
-      - name: 上传构建产物
+      - name: 上传
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-stable-stealth
+          name: frida-ios-minimal
           path: |
             frida_src/frida-arm.deb
             frida_src/frida-arm64.deb
