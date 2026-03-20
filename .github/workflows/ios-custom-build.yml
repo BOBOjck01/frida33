@@ -1,4 +1,4 @@
-name: Build Frida iOS (Pure Fixed)
+name: Build Frida iOS (ARM64 Clean Stable)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ jobs:
 
     env:
       FRIDA_VERSION: "16.6.6"
-      IOS_CERTID: "-"   # ✅ 关键：关闭签名
+      IOS_CERTID: "-"   # 关键：关闭签名
 
     steps:
       - name: Checkout
@@ -23,7 +23,7 @@ jobs:
       - name: Clean
         run: |
           cd frida_src
-          rm -rf build
+          rm -rf build build-out
 
       - name: Configure
         run: |
@@ -37,14 +37,21 @@ jobs:
       - name: Build
         run: |
           cd frida_src
-
           ninja -C build
 
       - name: Install
         run: |
           cd frida_src
-
           DESTDIR=build-out ninja -C build install
+
+      - name: Debug Paths
+        run: |
+          cd frida_src
+          echo "==== find frida-server ===="
+          find build-out -name frida-server || true
+
+          echo "==== list build-out ===="
+          ls -R build-out | head -n 200
 
       - name: Package
         run: |
@@ -54,9 +61,24 @@ jobs:
           mkdir -p pkg/usr/bin
           mkdir -p pkg/usr/lib/frida
 
-          cp build-out/usr/bin/frida-server pkg/usr/bin/
-          cp build-out/usr/lib/frida/frida-agent.dylib pkg/usr/lib/frida/
-          cp build-out/usr/lib/frida/frida-helper pkg/usr/lib/frida/
+          # ✅ 自动定位 frida-server（关键修复）
+          SERVER_PATH=$(find build-out -name frida-server | head -n 1)
+
+          if [ -z "$SERVER_PATH" ]; then
+            echo "❌ frida-server not found"
+            exit 1
+          fi
+
+          echo "Using server: $SERVER_PATH"
+
+          cp "$SERVER_PATH" pkg/usr/bin/frida-server
+
+          # agent / helper（存在才复制）
+          AGENT_PATH=$(find build-out -name frida-agent.dylib | head -n 1)
+          HELPER_PATH=$(find build-out -name frida-helper | head -n 1)
+
+          [ -f "$AGENT_PATH" ] && cp "$AGENT_PATH" pkg/usr/lib/frida/ || true
+          [ -f "$HELPER_PATH" ] && cp "$HELPER_PATH" pkg/usr/lib/frida/ || true
 
           cat > pkg/DEBIAN/control <<EOF
           Package: re.frida.server
@@ -74,5 +96,5 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios
+          name: frida-ios-arm64
           path: frida_src/frida.deb
