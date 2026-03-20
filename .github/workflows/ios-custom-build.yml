@@ -28,11 +28,10 @@ jobs:
 
       - name: Build
         run: |
-          # 修正为正确的 Makefile target
-          make server-ios-arm64
-          
+          # 16.2+ 直接使用基础架构 target 即可
+          make ios-arm64
           export MACOSX_DEPLOYMENT_TARGET=11.0
-          make server-ios-arm64e
+          make ios-arm64e
 
       - name: Package DEBs
         run: |
@@ -40,8 +39,12 @@ jobs:
           for arch in arm64 arm64e; do
             mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
             
-            cp build/frida-ios-$arch/bin/frida-server deb-$arch/usr/sbin/${FRIDA_NAME}
-            cp build/frida-ios-$arch/lib/frida/frida-agent.dylib deb-$arch/usr/lib/frida/
+            # 使用 find 动态定位产物，规避不同版本输出路径不同的问题 (极度健壮)
+            SERVER_PATH=$(find build/frida-ios-$arch -name "frida-server" -type f | head -n 1)
+            AGENT_PATH=$(find build/frida-ios-$arch -name "frida-agent.dylib" -type f | head -n 1)
+            
+            cp "$SERVER_PATH" deb-$arch/usr/sbin/${FRIDA_NAME}
+            cp "$AGENT_PATH" deb-$arch/usr/lib/frida/
             
             strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
