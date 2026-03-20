@@ -61,6 +61,8 @@ jobs:
 
           # ===== 检测残留 =====
           echo "==== check ===="
+          file sysmond || true
+          strings sysmond | head -n 5 || true
           strings sysmond | grep -i frida || true
 
       # ===== 打包 =====
