@@ -1,11 +1,10 @@
-name: Build Custom Frida iOS (16.2.1 Stealth Multi-Arch)
+name: Build Custom Frida iOS (16.2.1 Safe Stealth)
 
 on: workflow_dispatch
 
 jobs:
   build-ios:
     runs-on: macos-14
-
     env:
       FRIDA_NAME: internald
       PIPE_NAME: core-js-loop
@@ -29,100 +28,74 @@ jobs:
           brew install meson ninja pkg-config dpkg
           python -m pip install --upgrade pip setuptools wheel
 
-      # ✅ 修复后的 Patch（关键）
-      - name: Patch (Stable Stealth)
+      - name: Patch (Precise & Safe Stealth)
         run: |
           set -e
           export LC_ALL=C
+          
+          # 定义核心源码目录，跳过编译产物和 .git
+          TARGET_DIRS="subprojects/frida-core subprojects/frida-gum"
 
-          replace() {
-            local from=$1
-            local to=$2
-            grep -rlI "$from" . | while read f; do
-              sed -i '' "s/$from/$to/g" "$f"
-            done
-          }
+          echo "[*] 1. 修改管道和线程特征 (Gum 层)"
+          find subprojects/frida-gum -type f \( -name "*.c" -o -name "*.h" \) \
+            -exec sed -i '' "s/gum-js-loop/${PIPE_NAME}/g" {} +
 
-          echo "[*] 替换特征字符串"
+          echo "[*] 2. 修改端口、协议、RPC (Core 层)"
+          # 使用 -I 选项忽略二进制文件，只处理文本
+          grep -rlI "27042" subprojects/frida-core | xargs sed -i '' "s/27042/${PORT_NUMBER}/g"
+          grep -rlI "frida:rpc" $TARGET_DIRS | xargs sed -i '' "s/frida:rpc/core:rpc/g"
+          grep -rlI "pool-frida" $TARGET_DIRS | xargs sed -i '' "s/pool-frida/pool-core/g"
+          grep -rlI "re.frida.server" subprojects/frida-core | xargs sed -i '' "s/re.frida.server/re.core.server/g"
 
-          replace "gum-js-loop" "$PIPE_NAME"
-          replace "27042" "$PORT_NUMBER"
-          replace "frida:rpc" "core:rpc"
-          replace "frida-agent" "core-agent"
-          replace "re.frida.server" "re.core.server"
-          replace "FridaScriptEngine" "CoreScriptEngine"
-          replace "pool-frida" "pool-core"
+          echo "[*] 3. 修复 Agent 名称及加载路径"
+          # 这一步确保 Server 能找到更名后的 core-agent.dylib
+          grep -rlI "frida-agent" $TARGET_DIRS | xargs sed -i '' "s/frida-agent/core-agent/g"
 
-          echo "[*] 修改 server 名称"
-          sed -i '' "s/frida-server/${FRIDA_NAME}/g" subprojects/frida-core/server/server.vala
+          echo "[*] 4. 修改 Server 显示名称 (适配 16.2.x)"
+          # 动态定位包含 frida-server 逻辑的 vala 文件
+          TARGET_VALA=$(find subprojects/frida-core/server -name "*.vala" -exec grep -l "frida-server" {} + | head -n 1)
+          if [ -n "$TARGET_VALA" ]; then
+            sed -i '' "s/frida-server/${FRIDA_NAME}/g" "$TARGET_VALA"
+          fi
 
-      # ---------- arm64 ----------
-      - name: Build arm64
+      - name: Build arm64 (Standard)
         run: |
           make core-ios-arm64
-
           mkdir -p build/dist-arm64
           cp build/frida-ios-arm64/bin/frida-server build/dist-arm64/${FRIDA_NAME}
           cp build/frida-ios-arm64/lib/frida/frida-agent.dylib build/dist-arm64/core-agent.dylib
-
           strip build/dist-arm64/* || true
 
-      # ---------- arm64e ----------
-      - name: Build arm64e
+      - name: Build arm64e (A12+)
         run: |
           export MACOSX_DEPLOYMENT_TARGET=11.0
           make core-ios-arm64e
-
           mkdir -p build/dist-arm64e
           cp build/frida-ios-arm64e/bin/frida-server build/dist-arm64e/${FRIDA_NAME}
           cp build/frida-ios-arm64e/lib/frida/frida-agent.dylib build/dist-arm64e/core-agent.dylib
-
           strip build/dist-arm64e/* || true
 
-      # ---------- DEB arm64 ----------
-      - name: Package arm64 DEB
+      - name: Package DEBs
         run: |
-          mkdir -p deb-arm64/DEBIAN deb-arm64/usr/sbin deb-arm64/usr/lib/frida
-
-          cp build/dist-arm64/${FRIDA_NAME} deb-arm64/usr/sbin/
-          cp build/dist-arm64/core-agent.dylib deb-arm64/usr/lib/frida/
-
-          chmod 755 deb-arm64/usr/sbin/${FRIDA_NAME}
-
-          cat > deb-arm64/DEBIAN/control <<EOF
-          Package: com.core.${FRIDA_NAME}.arm64
-          Name: ${FRIDA_NAME} (arm64)
+          for arch in arm64 arm64e; do
+            mkdir -p deb-$arch/DEBIAN deb-$arch/usr/sbin deb-$arch/usr/lib/frida
+            cp build/dist-$arch/${FRIDA_NAME} deb-$arch/usr/sbin/
+            cp build/dist-$arch/core-agent.dylib deb-$arch/usr/lib/frida/
+            chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
+            
+            cat > deb-$arch/DEBIAN/control <<EOF
+          Package: com.core.${FRIDA_NAME}.$arch
+          Name: ${FRIDA_NAME} ($arch)
           Version: 16.2.1
           Architecture: iphoneos-arm
-          Description: Custom Frida arm64
+          Description: Custom Stealth Frida (Optimized Patch)
           Maintainer: Dev
           EOF
-
-          dpkg-deb -b deb-arm64 ${FRIDA_NAME}_arm64.deb
-
-      # ---------- DEB arm64e ----------
-      - name: Package arm64e DEB
-        run: |
-          mkdir -p deb-arm64e/DEBIAN deb-arm64e/usr/sbin deb-arm64e/usr/lib/frida
-
-          cp build/dist-arm64e/${FRIDA_NAME} deb-arm64e/usr/sbin/
-          cp build/dist-arm64e/core-agent.dylib deb-arm64e/usr/lib/frida/
-
-          chmod 755 deb-arm64e/usr/sbin/${FRIDA_NAME}
-
-          cat > deb-arm64e/DEBIAN/control <<EOF
-          Package: com.core.${FRIDA_NAME}.arm64e
-          Name: ${FRIDA_NAME} (arm64e)
-          Version: 16.2.1
-          Architecture: iphoneos-arm
-          Description: Custom Frida arm64e (A12+)
-          Maintainer: Dev
-          EOF
-
-          dpkg-deb -b deb-arm64e ${FRIDA_NAME}_arm64e.deb
+            dpkg-deb -b deb-$arch ${FRIDA_NAME}_$arch.deb
+          done
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-16.2.1-multi
+          name: frida-ios-stealth-final
           path: "*.deb"
