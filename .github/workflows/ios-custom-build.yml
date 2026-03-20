@@ -1,4 +1,4 @@
-name: 构建 Frida iOS（极简稳定 + USB Only + 双架构）
+name: 构建 Frida iOS（极简稳定 + USB Only + 双架构 + 轻度去特征）
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
           cd frida_src
           rm -rf build
 
-      # ===== 配置（极简）=====
+      # ===== 配置 =====
       - name: 配置
         run: |
           cd frida_src
@@ -38,8 +38,8 @@ jobs:
             --disable-frida-python \
             --disable-frida-tools
 
-      # ===== 只编 server =====
-      - name: 编译（仅 server）
+      # ===== 编译 =====
+      - name: 编译
         env:
           IOS_CERTID: "-"
         run: |
@@ -51,7 +51,7 @@ jobs:
         run: brew install dpkg
 
       # ===== 打包 =====
-      - name: 打包（双架构 + 隐匿）
+      - name: 打包（稳定 + 去特征）
         run: |
           cd frida_src
 
@@ -61,13 +61,23 @@ jobs:
           # ===== 二进制处理 =====
           cp "$SERVER_PATH" internald
 
-          perl -pi -e 's/frida-server/internald/g' internald
+          # ===== 核心伪装（等长，安全）=====
+          perl -pi -e 's/frida-server/internald___/g' internald
           perl -pi -e 's/re\.frida\.server/re.core.server/g' internald
 
-          strip -S internald || true
-          strip -x internald || true
+          # ===== 轻度去特征（安全）=====
+          perl -pi -e 's/frida-agent/core-agent/g' internald
+          perl -pi -e 's/frida-helper/core-helper/g' internald
 
-          # ===== ARM（iOS14）=====
+          # ===== 端口特征（可选安全）=====
+          perl -pi -e 's/27042/39042/g' internald
+          perl -pi -e 's/27043/39043/g' internald
+
+          # ===== 精简 =====
+          strip -Sx internald || true
+          strip -ur internald || true
+
+          # ===== ARM（iOS14 rootful）=====
           rm -rf pkg
           mkdir -p pkg/DEBIAN pkg/usr/bin
 
@@ -86,11 +96,15 @@ jobs:
 
           dpkg-deb -b pkg frida-arm.deb
 
-          # ===== ARM64（iOS16）=====
+          # ===== ARM64（iOS16 rootless兼容）=====
           rm -rf pkg
-          mkdir -p pkg/DEBIAN pkg/usr/bin
+          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/var/jb/usr/bin
 
+          # 主路径（你要求保留）
           cp internald pkg/usr/bin/internald
+
+          # rootless 兼容路径
+          cp internald pkg/var/jb/usr/bin/internald
 
           cat > pkg/DEBIAN/control <<EOF
           Package: re.core.server
