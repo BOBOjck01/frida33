@@ -62,19 +62,8 @@ jobs:
             strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
+            # 关键修复点：EOF 必须独占一行且顶格
             cat > deb-$arch/DEBIAN/control <<EOF
 Package: com.custom.${FRIDA_NAME}.${arch}
 Name: ${FRIDA_NAME}
-Version: ${FRIDA_VERSION}
-Architecture: iphoneos-arm
-Description: Custom Frida 16.2.1 Stable
-Maintainer: Dev
-EOF
-            dpkg-deb -b deb-$arch ${FRIDA_NAME}_${arch}.deb
-          done
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: frida-ios-16.2.1-stable
-          path: "*.deb"
+Version: ${
