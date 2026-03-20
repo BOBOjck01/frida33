@@ -16,11 +16,13 @@ jobs:
         run: |
           brew install dpkg python || true
 
-      # ===== 拉源码 =====
+      # ===== 拉源码（稳定写法）=====
       - name: 拉取源码
         run: |
-          git clone --depth 1 --branch $FRIDA_VERSION --single-branch https://github.com/frida/frida.git frida_src
+          git clone https://github.com/frida/frida.git frida_src
           cd frida_src
+          git fetch --tags
+          git checkout $FRIDA_VERSION
           git submodule update --init --recursive
 
       # ===== 编译 =====
@@ -40,93 +42,69 @@ jobs:
           ninja -C build -j$(sysctl -n hw.ncpu)
 
       # ===== 二进制处理 =====
-      - name: 去特征（Mach-O 安全版）
+      - name: 去特征
         run: |
           cd frida_src
 
-          SERVER=$(find build -type f -name frida-server | grep -v "\.a$" | head -n 1)
-          [ -z "$SERVER" ] && echo "❌ server not found" && exit 1
+          SERVER=$(find build -type f -name frida-server | head -n 1)
+          [ -z "$SERVER" ] && echo "❌ no server" && exit 1
 
           cp "$SERVER" sysmond
 
-          echo "==== BEFORE CHECK ===="
-          file sysmond || true
-          strings sysmond | grep -i frida || true
+          echo "==== BEFORE ===="
+          file sysmond
 
-          # ===== Mach-O 段级替换 =====
-          python3 <<'PY'
-import subprocess
-from collections import Counter
+          # ===== 更稳的 cstring 获取 =====
+          OFFSET=$(otool -l sysmond | awk '
+            $1=="sectname" && $2=="__cstring"{f=1}
+            f && $1=="offset"{print $2; exit}
+          ')
+          SIZE=$(otool -l sysmond | awk '
+            $1=="sectname" && $2=="__cstring"{f=1}
+            f && $1=="size"{print $2; exit}
+          ')
 
-BIN = "sysmond"
+          [ -z "$OFFSET" ] && echo "❌ no offset" && exit 1
+          [ -z "$SIZE" ] && echo "❌ no size" && exit 1
 
-out = subprocess.check_output(
-    "otool -l sysmond | awk '/sectname __cstring/{f=1} f&&/offset/{o=$2} f&&/size/{s=$2; print o,s; exit}'",
-    shell=True
-).decode().strip()
+          # ===== Python patch =====
+          python3 <<PY
+import sys
 
-if not out:
-    raise SystemExit("cstring not found")
+path = "sysmond"
+offset = int("$OFFSET")
+size = int("$SIZE")
 
-offset, size = map(int, out.split())
+data = bytearray(open(path,"rb").read())
+seg = data[offset:offset+size]
 
-with open(BIN, "rb") as f:
-    data = bytearray(f.read())
+def replace(old, new):
+    if len(old)!=len(new):
+        raise SystemExit("len mismatch")
+    i=0
+    c=0
+    while True:
+        j=seg.find(old, i)
+        if j==-1: break
+        seg[j:j+len(old)] = new
+        i=j+len(old)
+        c+=1
+    print(old, "->", new, "count=", c)
 
-segment = data[offset:offset+size]
+replace(b"frida-server", b"sysmond____")
+replace(b"re.frida.server", b"re.core.server_")
 
-strings = []
-i = 0
-while i < len(segment):
-    if segment[i] == 0:
-        i += 1
-        continue
-    start = i
-    while i < len(segment) and segment[i] != 0:
-        i += 1
-    strings.append(bytes(segment[start:i]))
+data[offset:offset+size] = seg
+open(path,"wb").write(data)
 
-counter = Counter(strings)
-
-print("==== candidates ====")
-for s in counter:
-    if b"frida" in s.lower():
-        print(s, "count=", counter[s])
-
-REPLACE_MAP = {
-    b"frida-server": b"sysmond____",
-    b"re.frida.server": b"re.core.server_",
-}
-
-for old, new in REPLACE_MAP.items():
-    if len(old) != len(new):
-        raise SystemExit("length mismatch")
-
-    if counter.get(old, 0) != 1:
-        print(f"skip {old}, count={counter.get(old,0)}")
-        continue
-
-    idx = segment.find(old)
-    if idx != -1:
-        segment[idx:idx+len(old)] = new
-        print(f"patched {old} -> {new}")
-
-data[offset:offset+size] = segment
-
-with open(BIN, "wb") as f:
-    f.write(data)
-
-print("==== patch done ====")
+print("patch done")
 PY
 
           chmod 755 sysmond
-
-          # ===== 精简 =====
           strip -S sysmond || true
 
-          echo "==== AFTER CHECK ===="
-          file sysmond || true
-          strings sysmond | head -n 5 || true
+          echo "==== AFTER ===="
+          file sysmond
           strings sysmond | grep -i frida || true
 
       # ===== 打包 =====
@@ -135,38 +113,32 @@ PY
           cd frida_src
           V=${{ env.FRIDA_VERSION }}
 
-          # ---------- rootful ----------
+          # rootful
           rm -rf pkg_rf
           mkdir -p pkg_rf/DEBIAN pkg_rf/usr/bin
           cp sysmond pkg_rf/usr/bin/sysmond
 
           cat > pkg_rf/DEBIAN/control <<EOF
           Package: re.core.server
-          Name: sysmond
           Version: $V
           Architecture: iphoneos-arm
           Description: system service
           Maintainer: root
-          Section: System
-          Depends: firmware (>= 12.0)
           EOF
 
           dpkg-deb -b pkg_rf frida-rootful.deb
 
-          # ---------- rootless ----------
+          # rootless
           rm -rf pkg_rl
           mkdir -p pkg_rl/DEBIAN pkg_rl/var/jb/usr/bin
           cp sysmond pkg_rl/var/jb/usr/bin/sysmond
 
           cat > pkg_rl/DEBIAN/control <<EOF
           Package: re.core.server
-          Name: sysmond
           Version: $V
           Architecture: iphoneos-arm64
           Description: system service
           Maintainer: root
-          Section: System
-          Depends: firmware (>= 15.0)
           EOF
 
           dpkg-deb -b pkg_rl frida-rootless.deb
