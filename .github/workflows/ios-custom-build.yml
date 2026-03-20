@@ -1,4 +1,4 @@
-name: Build Frida iOS Stealth (ARM64 FIXED FINAL)
+name: Build Frida iOS Stealth (ARM64 FINAL STABLE)
 
 on:
   workflow_dispatch:
@@ -20,25 +20,24 @@ jobs:
           git checkout tags/$FRIDA_VERSION
           git submodule update --init --recursive
 
-      - name: Apply stealth + fix build
+      - name: Apply stealth
         run: |
           cd frida_src
           set +e
 
-          # ===== 基础隐藏 =====
+          # 端口关闭
           sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala
           sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala
 
+          # 安全字符串混淆
           grep -rIl "gum-js-loop" subprojects | xargs -I{} sed -i '' 's/gum-js-loop/core-js-loop/g' "{}"
           grep -rIl 'default = "frida"' subprojects | xargs -I{} sed -i '' 's/default = "frida"/default = "core"/g' "{}"
 
+          # helper 标识
           sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent
 
-          # ===== 关键修复：禁用 codesign =====
+          # 禁用 codesign（关键）
           sed -i '' 's/codesign/#codesign/g' subprojects/frida-core/tools/post-process.py
-
-          # ===== 禁用 arm64e compat =====
-          sed -i '' 's/compat/#compat/g' subprojects/frida-core/meson.build || true
 
           set -e
 
@@ -99,12 +98,4 @@ jobs:
 
           # arm64
           sed -i '' 's/iphoneos-arm/iphoneos-arm64/g' pkg/DEBIAN/control
-          dpkg-deb -b pkg frida-arm64.deb
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: frida-ios
-          path: |
-            frida_src/frida-arm.deb
-            frida_src/frida-arm64.deb
+          dpkg-deb -b pkg frida-arm64.de
