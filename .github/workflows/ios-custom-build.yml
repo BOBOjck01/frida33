@@ -1,4 +1,4 @@
-name: Build Frida iOS Standard
+name: Build Frida iOS (Stealth Patch Mode)
 
 on:
   workflow_dispatch:
@@ -8,37 +8,41 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - name: Checkout Frida
-        # 使用完整克隆并递归子模块，确保所有目录都在
+      - name: Checkout This Repo
+        uses: actions/checkout@v4
+
+      - name: Clone Frida Official
         run: |
-          git clone --recurse-submodules --branch 16.2.1 https://github.com/frida/frida.git .
+          # 递归克隆 16.2.1 源码
+          git clone --recurse-submodules --depth 1 --branch 16.2.1 https://github.com/frida/frida.git frida_src
+
+      - name: Apply Stealth Patch
+        run: |
+          cd frida_src
+          # 强制应用补丁，忽略微小差异
+          git apply --ignore-whitespace ../stealth.patch
 
       - name: Setup Environment
         run: |
-          brew install meson ninja pkg-config dpkg
-          # 官方构建通常需要这些环境
+          brew install meson ninja pkg-config
           python3 -m pip install setuptools wheel
 
-      - name: Build iOS Arm64
+      - name: Official Build (arm64 & arm64e)
         run: |
-          # 直接使用根目录的 make，这是最稳的入口
-          # 它会自动下载需要的预编译 SDK 并处理所有 subprojects 路径
+          cd frida_src
+          # 调用官方脚本，自动处理 SDK 和路径
           make ios-arm64
-
-      - name: Build iOS Arm64e
-        run: |
-          # 针对新芯片的架构
           make ios-arm64e || true
 
       - name: Collect Binaries
         run: |
           mkdir -p output
-          # 官方构建后的产物固定在 build 目录下
-          find build/ -name "frida-server" -exec cp {} output/ \;
-          find build/ -name "frida-agent.dylib" -exec cp {} output/ \;
+          # 提取编译后的二进制文件
+          find frida_src/build/ -name "frida-server" -exec cp {} output/ \;
+          find frida_src/build/ -name "frida-agent.dylib" -exec cp {} output/ \;
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-binaries
+          name: frida-ios-stealth-binaries
           path: output/
