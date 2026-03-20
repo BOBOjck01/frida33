@@ -27,25 +27,19 @@ jobs:
           # 关闭默认端口
           sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala || true
 
-          # 禁止监听（USB only 强化）
+          # 禁止监听（USB only）
           sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala || true
 
-          # gum-js-loop -> core-js-loop
+          # 字符串混淆
           grep -rIl "gum-js-loop" subprojects | xargs -I{} sed -i '' 's/gum-js-loop/core-js-loop/g' "{}" || true
-
-          # frida -> core
           grep -rIl 'default = "frida"' subprojects | xargs -I{} sed -i '' 's/default = "frida"/default = "core"/g' "{}" || true
-
-          # frida-agent -> core-agent
           grep -rIl "frida-agent" subprojects | xargs -I{} sed -i '' 's/frida-agent/core-agent/g' "{}" || true
-
-          # gum 前缀弱化
           grep -rIl "gum-" subprojects | xargs -I{} sed -i '' 's/gum-/core-/g' "{}" || true
 
           # helper 标识
           sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent || true
 
-          # 进程名弱化（基础级）
+          # 进程名弱化
           grep -rIl "frida-server" subprojects | xargs -I{} sed -i '' 's/frida-server/internald/g' "{}" || true
 
       - name: Build arm64
@@ -56,17 +50,15 @@ jobs:
             --prefix=/usr \
             --host=ios-arm64 \
             --enable-portal \
-            --builddir=build-arm64 \
             -- \
             -Dfrida-gum:devkits=gum,gumjs \
             -Dfrida-core:compiler_backend=enabled \
             -Dfrida-core:assets=installed \
             -Dfrida-core:devkits=core
 
-          ninja -C build-arm64
-          DESTDIR=build-arm64 ninja -C build-arm64 install
+          make -j$(sysctl -n hw.ncpu)
+          DESTDIR=build-arm64 make install
 
-          # strip 符号
           strip -S build-arm64/usr/bin/frida-server || true
 
       - name: Package DEBs
@@ -81,7 +73,7 @@ jobs:
           cp build-arm64/usr/lib/frida/frida-agent.dylib pkg/usr/lib/frida/
           cp build-arm64/usr/lib/frida/frida-helper pkg/usr/lib/frida/
 
-          # -------- 包1：iphoneos-arm --------
+          # ---------- 包1：iphoneos-arm ----------
           cat > pkg/DEBIAN/control <<EOF
           Package: com.core.internald
           Name: internald
@@ -95,7 +87,7 @@ jobs:
 
           dpkg-deb -b pkg frida-arm.deb
 
-          # -------- 包2：iphoneos-arm64 --------
+          # ---------- 包2：iphoneos-arm64 ----------
           sed -i '' 's/iphoneos-arm/iphoneos-arm64/g' pkg/DEBIAN/control
 
           dpkg-deb -b pkg frida-arm64.deb
