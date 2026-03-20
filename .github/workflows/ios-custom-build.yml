@@ -1,4 +1,4 @@
-name: Build Frida iOS ARM64 ONLY (NO ARM64E FINAL)
+name: Build Frida iOS ARM64 ONLY (FINAL FIX)
 
 on:
   workflow_dispatch:
@@ -20,30 +20,30 @@ jobs:
           git checkout tags/$FRIDA_VERSION
           git submodule update --init --recursive
 
-      - name: Patch (核心修复)
-        run: |
-          cd frida_src
-          set +e
-
-          # ---------- 1. 禁止监听 ----------
-          sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala
-          sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala
-
-          # ---------- 2. 去 arm64e ----------
-          sed -i '' 's/"arm64", "arm64e"/"arm64"/g' subprojects/frida-core/compat/build.py
-
-          # ---------- 3. 干掉 codesign ----------
-          grep -rIl "codesign" subprojects | xargs -I{} sed -i '' 's|/usr/bin/codesign|true|g' "{}"
-
-          # ---------- 4. 跳过 cert 校验 ----------
-          sed -i '' 's/if certid is None:/if False:/g' subprojects/frida-core/tools/post-process.py
-
-          set -e
-
       - name: Clean
         run: |
           cd frida_src
           rm -rf build build-arm64
+          rm -rf subprojects/frida-core/compat/*.p || true
+
+      - name: Patch (关键修复)
+        run: |
+          cd frida_src
+          set +e
+
+          # ---------- 禁 arm64e ----------
+          sed -i '' 's/arm64", "arm64e/arm64/g' subprojects/frida-core/compat/build.py
+          sed -i '' 's/"arm64e"//g' subprojects/frida-core/compat/build.py
+
+          # ---------- 禁 codesign ----------
+          sed -i '' 's/codesign = .*/codesign = ["true"]/g' subprojects/frida-core/tools/post-process.py
+          sed -i '' 's/codesign_args = .*/codesign_args = []/g' subprojects/frida-core/tools/post-process.py
+
+          # ---------- USB only ----------
+          sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala
+          sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala
+
+          set -e
 
       - name: Configure
         run: |
