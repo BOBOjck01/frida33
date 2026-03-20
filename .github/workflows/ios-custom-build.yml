@@ -29,15 +29,14 @@ jobs:
           # 关闭端口
           sed -i '' 's/default = 27042/default = 0/' subprojects/frida-core/server/server.vala
 
-          # 禁止监听
+          # 禁止监听（USB only）
           sed -i '' 's/start_listen (/\/\/start_listen (/g' subprojects/frida-core/server/server.vala
 
-          # 安全字符串混淆（不会破坏结构）
+          # 安全字符串替换（仅 runtime 层）
           grep -rIl "gum-js-loop" subprojects | xargs -I{} sed -i '' 's/gum-js-loop/core-js-loop/g' "{}"
           grep -rIl 'default = "frida"' subprojects | xargs -I{} sed -i '' 's/default = "frida"/default = "core"/g' "{}"
-          grep -rIl "frida-agent" subprojects | xargs -I{} sed -i '' 's/frida-agent/core-agent/g' "{}"
 
-          # helper 标识
+          # helper 标识（安全）
           sed -i '' 's/re.frida.Helper/re.core.Helper/g' subprojects/frida-core/src/darwin/frida-helper.xcent
 
           set -e
