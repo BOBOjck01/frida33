@@ -1,4 +1,4 @@
-name: Build Frida iOS 16.2.1 (arm + arm64e)
+name: Build Frida
 
 on: workflow_dispatch
 
