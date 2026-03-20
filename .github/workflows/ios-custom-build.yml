@@ -1,51 +1,4 @@
-name: Build Frida iOS (Stable 16.2.1 - Syntax Fixed)
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build-ios:
-    runs-on: macos-14
-
-    env:
-      FRIDA_VERSION: 16.2.1
-      FRIDA_NAME: internald
-
-    steps:
-      - name: Clone
-        run: |
-          git clone --recurse-submodules --depth 1 --branch ${FRIDA_VERSION} https://github.com/frida/frida.git .
-
-      - name: Setup
-        run: |
-          brew install meson ninja pkg-config dpkg
-          python3 -m venv venv
-          source venv/bin/activate
-          pip install meson ninja setuptools wheel
-
-      - name: Patch Features
-        run: |
-          set -e
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) -exec sed -i '' \
-            -e 's/gum-js-loop/core-js-loop/g' \
-            -e 's/pool-frida/pool-core/g' \
-            -e 's/27042/27088/g' {} + || true
-
-          find subprojects/frida-core/server -name "*.vala" \
-            -exec sed -i '' "s/frida-server/${FRIDA_NAME}/g" {} + || true
-
-      - name: Build
-        run: |
-          set -e
-          source venv/bin/activate
-          cd subprojects/frida-core
-          meson setup build-arm64 --cross-file=releng/ios/ios-arm64.txt -Dserver=true -Doptimization=s
-          meson compile -C build-arm64
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          meson setup build-arm64e --cross-file=releng/ios/ios-arm64e.txt -Dserver=true -Doptimization=s || true
-          meson compile -C build-arm64e || true
-
-      - name: Package DEB
+- name: Package DEB
         run: |
           set -e
           for arch in arm64 arm64e; do
@@ -62,7 +15,7 @@ jobs:
             strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
             chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
 
-            # 注意：这里的 EOF 必须绝对顶格，不能有任何前导空格
+            # 关键：下方的 EOF 必须绝对顶格，不能有任何前导空格！
             cat > deb-$arch/DEBIAN/control <<EOF
 Package: com.custom.${FRIDA_NAME}.${arch}
 Name: ${FRIDA_NAME}
@@ -71,10 +24,6 @@ Architecture: iphoneos-arm
 Description: Custom Frida 16.2.1 Stable
 Maintainer: Dev
 EOF
+            # 这里的 dpkg-deb 缩进必须恢复正常
+            dpkg-deb -b deb-$arch ${FRIDA_NAME}_${arch}.deb
           done
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: frida-ios-16.2.1-stable
-          path: "*.deb"
