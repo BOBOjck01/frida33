@@ -1,103 +1,39 @@
-name: Build Custom Frida iOS (Stealth)
+name: Build Frida iOS (Minimal OK)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-ios:
+  build:
     runs-on: macos-14
 
-    env:
-      FRIDA_VERSION: 16.2.1
-      FRIDA_NAME: internald
-
     steps:
-      - name: Clone Frida
+      - name: Clone
         run: |
-          git clone --recurse-submodules --depth 1 --branch ${FRIDA_VERSION} https://github.com/frida/frida.git .
+          git clone --recurse-submodules https://github.com/frida/frida.git .
+          git checkout 16.2.1
+          git submodule update --init --recursive
 
-      - name: Setup Environment
+      - name: Setup
         run: |
-          brew install meson ninja pkg-config dpkg
+          brew install meson ninja pkg-config
           python3 -m venv venv
           source venv/bin/activate
-          pip install meson ninja setuptools wheel
+          pip install meson ninja
 
-      - name: Patch
-        run: |
-          set -e
-
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
-            -exec sed -i '' 's/gum-js-loop/core-js-loop/g' {} + || true
-
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
-            -exec sed -i '' 's/pool-frida/pool-core/g' {} + || true
-
-          find . -type f \( -name "*.c" -o -name "*.vala" -o -name "*.h" \) \
-            -exec sed -i '' 's/27042/27088/g' {} + || true
-
-      - name: Build
+      - name: Build arm64
         run: |
           set -e
           source venv/bin/activate
 
-          meson setup build-arm64 \
-            --cross-file=releng/meson/ios-arm64.txt \
-            -Dserver=true \
-            -Dgumjs=enabled \
-            -Doptimization=s
+          cd subprojects/frida-core
 
-          meson compile -C build-arm64
+          meson setup build \
+            --cross-file=releng/ios/ios-arm64.txt \
+            -Dserver=true
 
-          export MACOSX_DEPLOYMENT_TARGET=11.0
+          meson compile -C build
 
-          meson setup build-arm64e \
-            --cross-file=releng/meson/ios-arm64e.txt \
-            -Dserver=true \
-            -Dgumjs=enabled \
-            -Doptimization=s || true
-
-          meson compile -C build-arm64e || true
-
-      - name: Package
+      - name: Show Output
         run: |
-          set -e
-
-          for arch in arm64 arm64e; do
-            BUILD_DIR=build-$arch
-
-            SERVER_PATH=$(find $BUILD_DIR -name "frida-server" -type f | head -n 1)
-            AGENT_PATH=$(find $BUILD_DIR -name "frida-agent.dylib" -type f | head -n 1)
-
-            if [ -z "$SERVER_PATH" ]; then
-              echo "skip $arch"
-              continue
-            fi
-
-            mkdir -p deb-$arch/DEBIAN
-            mkdir -p deb-$arch/usr/sbin
-            mkdir -p deb-$arch/usr/lib/frida
-
-            cp "$SERVER_PATH" deb-$arch/usr/sbin/${FRIDA_NAME}
-            cp "$AGENT_PATH" deb-$arch/usr/lib/frida/
-
-            strip deb-$arch/usr/sbin/${FRIDA_NAME} || true
-            chmod 755 deb-$arch/usr/sbin/${FRIDA_NAME}
-
-            cat > deb-$arch/DEBIAN/control <<EOF
-Package: com.custom.${FRIDA_NAME}.${arch}
-Name: ${FRIDA_NAME}
-Version: ${FRIDA_VERSION}
-Architecture: iphoneos-arm
-Description: Custom Frida
-Maintainer: Dev
-EOF
-
-            dpkg-deb -b deb-$arch ${FRIDA_NAME}_${arch}.deb
-          done
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: frida-ios
-          path: "*.deb"
+          find subprojects/frida-core/build -name "frida-server"
