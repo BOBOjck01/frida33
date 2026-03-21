@@ -159,6 +159,11 @@ jobs:
     needs: build
 
     steps:
+      - name: 安装依赖
+        run: |
+            brew update
+            brew install dpkg
+            
       - name: 下载产物
         uses: actions/download-artifact@v4
         with:
@@ -209,3 +214,6 @@ jobs:
           BIN=$(find out -type f -name sysmond | head -n 1)
           COUNT=$(strings "$BIN" | grep -i frida | wc -l | tr -d ' ')
           echo "Frida 命中总数: $COUNT"
+          echo
+          echo "==== Top 关键词 ===="
+          strings "$BIN" | grep -i frida | cut -c1-80 | sort | uniq -c | sort -nr | head
