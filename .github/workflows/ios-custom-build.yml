@@ -90,7 +90,12 @@ jobs:
 
           # 2. 使用更稳健的方式查找二进制文件
           # 注意：ios-arm64 编译产物可能在 build/subprojects/frida-core/server/ 等深层目录下
-          SERVER_PATH=$(find build -type f -perm -111 | grep -i frida-server | head -n 1)
+          SERVER_PATH=$(find build -type f -name "frida-server" | while read f; do
+          if file "$f" | grep -q "Mach-O"; then
+          echo "$f"
+          break
+          fi
+          done)
           echo "SERVER=$SERVER_PATH"
 
           if [ -z "$SERVER_PATH" ] || [ ! -f "$SERVER_PATH" ]; then
