@@ -1,60 +1,63 @@
 name: 彻底替换仓库为 Frida 16.6.6 源码
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 手动触发
 
 jobs:
   replace:
     runs-on: ubuntu-latest
 
+    # 必须开启写入权限，否则无法推送到仓库
     permissions:
       contents: write
 
     steps:
       - name: 1. 拉取当前仓库
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 2. 清空当前目录 (保留 .git)
         shell: bash
         run: |
-          # 开启扩展通配符
+          # 开启扩展匹配模式
           shopt -s extglob dotglob
-          # 删除除 .git 以外的所有内容
+          # 删除除了 .git 以外的所有文件和文件夹
           rm -rf !(.git)
 
       - name: 3. 拉取 Frida 16.6.6 核心源码
         run: |
-          # 克隆指定版本，深度为 1 节省时间
+          # 克隆指定版本，深度为 1 以加快速度
           git clone --depth 1 --branch 16.6.6 https://github.com/frida/frida.git tmp_frida
 
-      - name: 4. 同步关键子模块 (编译必须)
+      - name: 4. 同步关键子模块 (如果不执行此步，源码目录将是空的)
         run: |
           cd tmp_frida
-          # 同步必要的子模块，否则仓库里只有空目录
+          # 只同步编译 iOS 必须的子模块，节省时间和空间
           git submodule update --init --recursive --depth 1 releng
           git submodule update --init --recursive --depth 1 subprojects/frida-gum
           git submodule update --init --recursive --depth 1 subprojects/frida-core
 
-      - name: 5. 覆盖到当前仓库
+      - name: 5. 覆盖文件并清理
         shell: bash
         run: |
           shopt -s dotglob
-          # 将 tmp_frida 下的所有内容（含隐藏文件）移动到当前目录
+          # 将所有内容（包括隐藏文件）移出
           cp -R tmp_frida/* .
-          # 删除临时目录
+          # 清理临时目录和 Frida 自带的 git 配置
           rm -rf tmp_frida
-
-      - name: 6. 清理冗余配置
-        run: |
-          # 移除 Frida 原有的 GitHub Action 和 Git 配置，避免冲突
           rm -rf .github
           rm -rf .gitmodules || true
 
-      - name: 7. 提交并推送至当前仓库
+      - name: 6. 提交并推送
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add .
-          # 即使没有变化也不报错
+          
+          # 强制添加所有文件
+          git add -A
           git commit -m "chore: replace repository with frida 16.6.6 full source" || echo "No changes to commit"
-          git push origin main # 如果你的分支名是 master 请改为 master
+          
+          # 使用内置的 GITHUB_TOKEN 进行身份验证并推送
+          # 注意：如果你的主分支名是 master，请将下面的 main 改为 master
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main --force
