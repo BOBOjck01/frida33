@@ -95,7 +95,7 @@ jobs:
           cp "$SERVER" sysmond
 
           strip -S -x sysmond 2>/dev/null || true
-          perl -0777 -pi -e 's/\{"version"\s*:\s*3.*?\}\n?//gs' sysmond
+          perl -0777 -pi -e 's/[!A-Za-z0-9]*\{"version"\s*:\s*3,"sources":\[.*?\}\n?//gs' sysmond
           echo "==== sourcemap check ===="
           strings sysmond | grep '"sources"' && echo "❌ sourcemap still exists" || echo "✅ sourcemap removed"
 
