@@ -40,9 +40,6 @@ jobs:
       - name: JS runtime 去特征
         run: |
           cd frida_src
-          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/Frida/Core/g' || true
-          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/frida/core/g' || true
-          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
           sed -i '' 's/--sourcemap//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
           sed -i '' 's/--debug//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
 
