@@ -1,129 +1,43 @@
-name: 构建 Frida iOS（进阶隐匿版）
+name: 替换仓库为 Frida 16.6.6
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-14
+  replace:
+    runs-on: ubuntu-latest
 
-    env:
-      FRIDA_VERSION: "16.6.6"
+    permissions:
+      contents: write
 
     steps:
-      - name: 环境准备
+      - name: 拉取当前仓库
+        uses: actions/checkout@v4
+
+      - name: 清空仓库（保留 .git）
         run: |
-          brew update
-          brew install dpkg ldid
+          shopt -s dotglob
+          rm -rf !( .git )
 
-      - name: 拉取源码
+      - name: 拉取 Frida 16.6.6
         run: |
-          git clone --depth 1 --branch ${{ env.FRIDA_VERSION }} https://github.com/frida/frida.git frida_src
-          cd frida_src
-          git submodule update --init --recursive --depth 1
+          git clone --depth 1 --branch 16.6.6 https://github.com/frida/frida.git tmp_frida
 
-      - name: 源码优化（安全级）
+      - name: 覆盖文件
         run: |
-          cd frida_src
+          cp -R tmp_frida/* .
+          cp -R tmp_frida/.* . 2>/dev/null || true
+          rm -rf tmp_frida
 
-          # 关闭 gumjs debug
-          sed -i '' "s/debug: true/debug: false/g" subprojects/frida-gum/bindings/gumjs/meson.build || true
-          sed -i '' 's/"frida-server"/"sysmond"/g' subprojects/frida-core/server/server.vala || true
-          sed -i '' 's/Listening on/Service started/g' subprojects/frida-core/server/server.vala || true
-
-      - name: 编译
+      - name: 清理无用内容
         run: |
-          cd frida_src
-          rm -rf build
-          export IOS_CERTID=-
+          rm -rf .github
+          rm -rf .gitmodules || true
 
-          ./configure \
-            --prefix=/usr \
-            --host=ios-arm64 \
-            --enable-server \
-            --disable-gadget \
-            --disable-frida-python \
-            --disable-frida-tools \
-            -- \
-            -Dbuildtype=release \
-            -Doptimization=3 \
-            -Db_ndebug=true \
-            -Dstrip=true \
-            -Db_lto=true \
-            -Dcpp_rtti=false \
-            -Db_pie=true
-
-          ninja -C build -j$(sysctl -n hw.ncpu)
-
-      - name: 二进制处理（隐匿增强）
+      - name: 提交并推送
         run: |
-          cd frida_src
-
-          SERVER_PATH=$(find ./build -type f -name "frida-server" -exec file {} + | grep "Mach-O" | cut -d: -f1 | head -n 1)
-          if [ -z "$SERVER_PATH" ]; then exit 1; fi
-
-          cp "$SERVER_PATH" sysmond
-
-          # 安全 strip
-          strip -x sysmond
-          strip -ur sysmond
-
-          # 权限
-          echo '<?xml version="1.0" encoding="UTF-8"?>
-          <plist version="1.0">
-          <dict>
-          <key>get-task-allow</key><true/>
-          <key>task_for_pid-allow</key><true/>
-          </dict>
-          </plist>' > ents.xml
-
-          ldid -Sents.xml sysmond
-
-      # ===== 打包 =====
-      - name: 打包
-        run: |
-          cd frida_src
-          V=${{ env.FRIDA_VERSION }}
-
-          # ---------- rootful ----------
-          rm -rf pkg_rf
-          mkdir -p pkg_rf/DEBIAN pkg_rf/usr/bin
-          cp sysmond pkg_rf/usr/bin/sysmond
-
-          cat > pkg_rf/DEBIAN/control <<EOF
-          Package: com.apple.system.service
-          Name: sysmond
-          Version: $V
-          Architecture: iphoneos-arm
-          Description: system service
-          Maintainer: root
-          Section: System
-          Depends: firmware (>= 12.0)
-          EOF
-
-          dpkg-deb -b pkg_rf frida-rootfularm.deb
-
-          # ---------- rootless ----------
-          rm -rf pkg_rl
-          mkdir -p pkg_rl/DEBIAN pkg_rl/var/jb/usr/bin
-          cp sysmond pkg_rl/var/jb/usr/bin/sysmond
-
-          cat > pkg_rl/DEBIAN/control <<EOF
-          Package: com.apple.system.service
-          Name: sysmond
-          Version: $V
-          Architecture: iphoneos-arm64
-          Description: system service
-          Maintainer: root
-          Section: System
-          Depends: firmware (>= 15.0)
-          EOF
-
-          dpkg-deb -b pkg_rl frida-rootlessarm64.deb
-
-      # ===== 上传 =====
-      - name: 上传
-        uses: actions/upload-artifact@v4
-        with:
-          name: frida-ios-final
-          path: frida_src/*.deb
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "replace with frida 16.6.6 source" || echo "no changes"
+          git push
