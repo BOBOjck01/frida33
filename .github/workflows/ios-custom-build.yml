@@ -72,7 +72,6 @@ jobs:
             -Dstrip=true \
             -Db_lto=true \
             -Dcpp_rtti=false \
-            -Dcpp_eh=none
 
           export IOS_CERTID=-
           ninja -C build -j$(sysctl -n hw.ncpu)
