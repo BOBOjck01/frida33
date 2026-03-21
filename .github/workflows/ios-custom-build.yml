@@ -39,11 +39,15 @@ jobs:
       - name: JS runtime 去特征（正确版）
         run: |
           cd frida_src
-          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/Frida/Core/g' || true
-          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/frida/core/g' || true
-          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
-          sed -i '' 's/--sourcemap//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
-          sed -i '' 's/--debug//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
+          FILE=subprojects/frida-gum/bindings/gumjs/meson.build
+          # 1. 删除 debug
+          sed -i '' 's/--debug//g' "$FILE" || true
+          # 2. 如果有 --sourcemap → 替换
+          sed -i '' 's/--sourcemap/--no-source-maps/g' "$FILE" || true
+          # 3. 如果完全没有 → 强插
+          grep -q -- '--no-source-maps' "$FILE" || \
+          echo "frida_compile += ['--no-source-maps']" >> "$FILE"
+
 
       - name: 删除缓存 
         run: |
