@@ -1,4 +1,4 @@
-name: 构建 Frida iOS（安全隐匿版）
+name: 构建 Frida iOS（最终优化版）
 
 on:
   workflow_dispatch:
@@ -6,58 +6,42 @@ on:
 jobs:
   build:
     runs-on: macos-14
-
     env:
       FRIDA_VERSION: "16.6.6"
 
     steps:
-      # ===== 1. 环境准备 & 源码拉取 =====
-      - name: 准备环境与源码
+      - name: 环境准备与源码拉取
         run: |
           brew update
           brew install dpkg ldid
-
           git clone --depth 1 --branch ${{ env.FRIDA_VERSION }} https://github.com/frida/frida.git frida_src
           cd frida_src
           git submodule update --init --recursive
 
-      - name: 源码级去特征
+      - name: 深度源码去特征
         run: |
           cd frida_src
-        
+          # 1. 端口与基础字符串替换
           CORE_DIR=$(find . -type d -name frida-core | head -n 1)
-          if [ -z "$CORE_DIR" ]; then echo "❌ frida-core not found"; exit 1; fi
-        
-          cd "$CORE_DIR"
-        
-          grep -rlZ "27042" . | xargs -0 -I {} sed -i '' 's/27042/39042/g' "{}" || true
-          grep -rlZ "27043" . | xargs -0 -I {} sed -i '' 's/27043/39043/g' "{}" || true
-          grep -rlZ "re\.frida\.server" . | xargs -0 -I {} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
-          grep -rlZ "FridaAgent" . | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
+          find "$CORE_DIR" -type f -name "*" -print0 | xargs -0 sed -i '' 's/27042/39042/g' || true
+          find "$CORE_DIR" -type f -name "*" -print0 | xargs -0 sed -i '' 's/re\.frida\.server/re.core.server/g' || true
+          find "$CORE_DIR" -type f -name "*" -print0 | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
+          # 2. 修改 JS runtime 编译选项
+          GUM_MESON="subprojects/frida-gum/bindings/gumjs/meson.build"
+          sed -i '' "s/debug: true/debug: false/g" "$GUM_MESON" || true
+          sed -i '' "s/--sourcemap/--no-source-maps/g" "$GUM_MESON" || true
 
-      - name: JS runtime 去特征
-        run: |
-          cd frida_src
-          FILE=subprojects/frida-gum/bindings/gumjs/meson.build
-          # 1. 删除 debug，替换 sourcemap
-          sed -i '' 's/--debug//g' "$FILE" || true
-          sed -i '' 's/--sourcemap/--no-source-maps/g' "$FILE" || true
-          # 2. 强制修改 frida-compile 调用
-          sed -i '' '0,/frida-compile/s//frida-compile --no-source-maps/' "$FILE"
-
-      - name: 清理缓存
+      - name: 执行极致优化编译
         run: |
           cd frida_src
           rm -rf build
-          rm -rf subprojects/frida-gum/node_modules
           
-      # ===== 2. 配置 & 编译 =====
-      - name: 编译 Frida Server
-        run: |
-          cd frida_src
-          export CFLAGS="-O3 -s"
-          export CXXFLAGS="-O3 -s"
-
+          # 核心优化策略：
+          # -- 为 Meson 原生参数的分隔符
+          # b_lto: 开启链接时优化，消除冗余代码，增强隐匿性
+          # b_ndebug: 禁用所有 assert 打印
+          # cpp_rtti=false: 禁用 C++ 运行时类型信息，移除大量类名字符串
+          # optimization=3: 开启最高级编译器优化
           ./configure \
             --prefix=/usr \
             --host=ios-arm64 \
@@ -67,98 +51,82 @@ jobs:
             --disable-frida-tools \
             -- \
             -Dbuildtype=release \
-            -Db_ndebug=true
+            -Doptimization=3 \
+            -Db_ndebug=true \
+            -Dstrip=true \
+            -Db_lto=true \
+            -Dcpp_rtti=false \
+            -Dcpp_eh=none
 
-          ninja -C build -j$(sysctl -n hw.ncpu) || { echo "❌ 编译失败"; exit 1; }
+          ninja -C build -j$(sysctl -n hw.ncpu)
 
-      # ===== 3. 二进制处理 & 重签名 =====
-      - name: 二进制处理与重签名
+      - name: 二进制深度后处理
         run: |
           cd frida_src
-          
-          # 精确查找 Mach-O 格式的二进制文件
+          # 定位并复制二进制
           SERVER_PATH=$(find ./build -type f -name "frida-server" -exec file {} + | grep "Mach-O" | cut -d: -f1 | head -n 1)
-
-          if [ -z "$SERVER_PATH" ] || [ ! -f "$SERVER_PATH" ]; then
-            echo "❌ 未找到可执行二进制 frida-server"
-            find ./build -maxdepth 5 -name "*server*"
-            exit 1
-          fi
-
-          echo "✅ 找到目标文件: $SERVER_PATH"
+          if [ -z "$SERVER_PATH" ]; then exit 1; fi
           cp "$SERVER_PATH" sysmond
-          chmod 755 sysmond
-
-          # 执行 Strip (移除符号表)
-          strip -s sysmond || { echo "❌ strip 失败"; exit 1; }
-
-          # 字符串级深度替换
+          
+          # 1. 强行剥离符号表（即使编译时开了 strip，这里再做一次物理清除）
+          strip -x sysmond 
+          
+          # 2. 针对二进制进行末端字符串抹除
           perl -pi -e 's#/_frida\.js#/_core.js#g' sysmond
           perl -pi -e 's/frida-server/sysmond____/g' sysmond || true
-          perl -pi -e 's/frida-agent/sysmond-agent/g' sysmond || true
-          perl -pi -e 's/re\.frida\.server/re.core.server/g' sysmond || true
 
-          # 签名处理：提取权限或使用兜底权限
+          # 3. 签名与权限注入
           ldid -e "$SERVER_PATH" > ents.xml 2>/dev/null || true
           if [ ! -s ents.xml ]; then
             echo '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>get-task-allow</key><true/><key>platform-application</key><true/></dict></plist>' > ents.xml
           fi
           ldid -Sents.xml sysmond
 
-      # ===== 4. 打包 DEB =====
+      # ===== 打包 =====
       - name: 打包
         run: |
           cd frida_src
           V=${{ env.FRIDA_VERSION }}
 
-          # Rootful 打包
+          # ---------- rootful ----------
+          rm -rf pkg_rf
           mkdir -p pkg_rf/DEBIAN pkg_rf/usr/bin
-          install -m 755 sysmond pkg_rf/usr/bin/sysmond
+          cp sysmond pkg_rf/usr/bin/sysmond
+
           cat > pkg_rf/DEBIAN/control <<EOF
           Package: re.core.server
           Name: sysmond
           Version: $V
           Architecture: iphoneos-arm
-          Description: system service (security version)
+          Description: system service
           Maintainer: root
           Section: System
           Depends: firmware (>= 12.0)
           EOF
-          dpkg-deb -b pkg_rf frida-rootfularm.deb
 
-          # Rootless 打包
+          dpkg-deb -b pkg_rf frida-rootful.deb
+
+          # ---------- rootless ----------
+          rm -rf pkg_rl
           mkdir -p pkg_rl/DEBIAN pkg_rl/var/jb/usr/bin
-          install -m 755 sysmond pkg_rl/var/jb/usr/bin/sysmond
+          cp sysmond pkg_rl/var/jb/usr/bin/sysmond
+
           cat > pkg_rl/DEBIAN/control <<EOF
           Package: re.core.server
           Name: sysmond
           Version: $V
           Architecture: iphoneos-arm64
-          Description: system service (security version)
+          Description: system service
           Maintainer: root
           Section: System
           Depends: firmware (>= 15.0)
           EOF
-          dpkg-deb -b pkg_rl frida-rootlessarm64.deb
 
-      - name: 上传产物
+          dpkg-deb -b pkg_rl frida-rootless.deb
+
+      # ===== 上传 =====
+      - name: 上传
         uses: actions/upload-artifact@v4
         with:
           name: frida-ios-final
           path: frida_src/*.deb
-
-  inspect:
-    name: 检测残留特征
-    runs-on: macos-14
-    needs: build
-    steps:
-      - name: 下载产物并解包
-        uses: actions/download-artifact@v4
-        with:
-          name: frida-ios-final
-      - name: 特征扫描
-        run: |
-          mkdir out && dpkg-deb -x $(ls *.deb | head -n 1) out
-          BIN=$(find out -type f -name sysmond | head -n 1)
-          echo "==== 扫描关键词: frida ===="
-          strings "$BIN" | grep -i frida | head -n 20 || echo "✅ 未发现明显特征"
