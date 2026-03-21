@@ -95,7 +95,11 @@ jobs:
           cp "$SERVER" sysmond
 
           strip -S -x sysmond 2>/dev/null || true
-          perl -0777 -pi -e 's/[!A-Za-z0-9]*\{"version"\s*:\s*3,"sources":\[.*?\}\n?//gs' sysmond
+          # ===== 1. 删 sourcemap =====
+          perl -0777 -pi -e 's/[!Y&0AL]*\{"version"\s*:\s*3,"sources":\[.*?\}\n?//gs' sysmond
+          perl -0777 -pi -e 's/\{"version"\s*:\s*3,"sources":\[.*?\}\n?//gs' sysmond
+          # 只改路径字符串，不动 require
+          perl -pi -e 's#/_frida\.js#/_core.js#g' sysmond
           echo "==== sourcemap check ===="
           strings sysmond | grep '"sources"' && echo "❌ sourcemap still exists" || echo "✅ sourcemap removed"
 
