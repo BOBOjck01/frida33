@@ -59,6 +59,10 @@ jobs:
           IOS_CERTID: "-"
         run: |
           cd frida_src
+          export CFLAGS="-O3 -s"
+          export CXXFLAGS="-O3 -s"
+
+
 
           ./configure \
             --prefix=/usr \
@@ -81,23 +85,18 @@ jobs:
         run: |
           cd frida_src
 
-          SERVER=$(find build -type f -path "*/frida-core/*/server/*" -name "frida-server*" | head -n 1)
-
-          if [ -z "$SERVER" ]; then
-            SERVER=$(find build -type f -name "frida-server*" | head -n 1)
-          fi
-
-          if [ -z "$SERVER" ]; then
-            echo "❌ 未找到编译产物"
+          SERVER=$(find build -type f | grep -i frida-server | head -n 1)
+          echo "SERVER=$SERVER"
+          if [ -z "$SERVER" ] || [ ! -f "$SERVER" ]; then
+            echo "❌ 未找到 frida-server"
+            find build -type f | grep -i server | head -n 20
             exit 1
           fi
 
-          cp "$SERVER" sysmond
+          cp "$SERVER" sysmond || exit 1
 
-          strip -S -x sysmond 2>/dev/null || true
+          strip -s sysmond
           # ===== 1. 删 sourcemap =====
-          perl -0777 -pi -e 's/[!Y&0AL]*\{"version"\s*:\s*3,"sources":\[.*?"mappings":"[^"]*"\}//gs' sysmond
-          perl -0777 -pi -e 's/[!Y&0AL]*\{"version":3,"sources":\[.*?\}\}//gs' sysmond
           # 只改路径字符串，不动 require
           perl -pi -e 's#/_frida\.js#/_core.js#g' sysmond
           echo "==== sourcemap check ===="
