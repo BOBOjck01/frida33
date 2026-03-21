@@ -1,4 +1,4 @@
-name: 替换仓库为 Frida 16.6.6
+name: 彻底替换仓库为 Frida 16.6.6 源码
 
 on:
   workflow_dispatch:
@@ -11,33 +11,50 @@ jobs:
       contents: write
 
     steps:
-      - name: 拉取当前仓库
+      - name: 1. 拉取当前仓库
         uses: actions/checkout@v4
 
-      - name: 清空仓库（保留 .git）
+      - name: 2. 清空当前目录 (保留 .git)
+        shell: bash
         run: |
-          shopt -s dotglob
-          rm -rf !( .git )
+          # 开启扩展通配符
+          shopt -s extglob dotglob
+          # 删除除 .git 以外的所有内容
+          rm -rf !(.git)
 
-      - name: 拉取 Frida 16.6.6
+      - name: 3. 拉取 Frida 16.6.6 核心源码
         run: |
+          # 克隆指定版本，深度为 1 节省时间
           git clone --depth 1 --branch 16.6.6 https://github.com/frida/frida.git tmp_frida
 
-      - name: 覆盖文件
+      - name: 4. 同步关键子模块 (编译必须)
         run: |
+          cd tmp_frida
+          # 同步必要的子模块，否则仓库里只有空目录
+          git submodule update --init --recursive --depth 1 releng
+          git submodule update --init --recursive --depth 1 subprojects/frida-gum
+          git submodule update --init --recursive --depth 1 subprojects/frida-core
+
+      - name: 5. 覆盖到当前仓库
+        shell: bash
+        run: |
+          shopt -s dotglob
+          # 将 tmp_frida 下的所有内容（含隐藏文件）移动到当前目录
           cp -R tmp_frida/* .
-          cp -R tmp_frida/.* . 2>/dev/null || true
+          # 删除临时目录
           rm -rf tmp_frida
 
-      - name: 清理无用内容
+      - name: 6. 清理冗余配置
         run: |
+          # 移除 Frida 原有的 GitHub Action 和 Git 配置，避免冲突
           rm -rf .github
           rm -rf .gitmodules || true
 
-      - name: 提交并推送
+      - name: 7. 提交并推送至当前仓库
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add .
-          git commit -m "replace with frida 16.6.6 source" || echo "no changes"
-          git push
+          # 即使没有变化也不报错
+          git commit -m "chore: replace repository with frida 16.6.6 full source" || echo "No changes to commit"
+          git push origin main # 如果你的分支名是 master 请改为 master
