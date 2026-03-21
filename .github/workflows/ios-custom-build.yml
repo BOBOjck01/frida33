@@ -1,4 +1,4 @@
-name: 构建 Frida iOS（稳定 + USB Only + 双环境 + 安全隐匿）
+name: 构建 Frida iOS（安全隐匿版）
 
 on:
   workflow_dispatch:
@@ -11,20 +11,32 @@ jobs:
       FRIDA_VERSION: "16.6.6"
 
     steps:
-      # ===== 拉源码 =====
-      - name: 拉取源码
+      # ===== 1. 环境准备 & 源码拉取 =====
+      - name: 准备环境与源码
         run: |
-          brew install dpkg
-          git clone --depth 1 --branch $FRIDA_VERSION https://github.com/frida/frida.git frida_src
+          brew update
+          brew install dpkg ldid
+
+          git clone --depth 1 --branch ${{ env.FRIDA_VERSION }} https://github.com/frida/frida.git frida_src
           cd frida_src
           git submodule update --init --recursive
 
-      # ===== 配置 & 编译 =====
-      - name: 编译
+      # ===== 2. 源码级去特征 =====
+      - name: 源码级去特征
+        run: |
+          cd frida_src/frida-core
+
+          grep -rl "27042" . | xargs -r sed -i '' 's/27042/39042/g' || true
+          grep -rl "27043" . | xargs -r sed -i '' 's/27043/39043/g' || true
+          grep -rl "re\.frida\.server" . | xargs -r sed -i '' 's/re.frida.server/re.core.server/g' || true
+
+      # ===== 3. 配置 & 编译 =====
+      - name: 编译 Frida Server
         env:
           IOS_CERTID: "-"
         run: |
           cd frida_src
+
           ./configure \
             --prefix=/usr \
             --host=ios-arm64 \
@@ -32,38 +44,40 @@ jobs:
             --disable-gadget \
             --disable-frida-python \
             --disable-frida-tools
-          ninja -C build
 
-      # ===== 二进制处理 =====
-      - name: 去特征
+          ninja -C build -j$(sysctl -n hw.ncpu)
+
+          # 基本校验
+          find build -name frida-server | grep -q . || { echo "❌ 编译失败"; exit 1; }
+
+      # ===== 4. 二进制处理 & 重签名 =====
+      - name: 二进制处理与重签名
         run: |
           cd frida_src
 
-          SERVER=$(find build -name frida-server | head -n 1)
+          SERVER=$(find build -type f -name frida-server | head -n 1)
+          if [ -z "$SERVER" ]; then echo "❌ 未找到编译产物"; exit 1; fi
+
           cp "$SERVER" sysmond
 
-          # ===== 等长替换（核心）=====
-          perl -pi -e 's/frida-server/sysmond____/g' sysmond
-          perl -pi -e 's/re\.frida\.server/re.core.server_/g' sysmond
-          
+          strip -S sysmond || true
 
-          # ===== 端口（可选）=====
-          perl -pi -e 's/27042/39042/g' sysmond
-          perl -pi -e 's/27043/39043/g' sysmond
+          perl -pi -e 's/frida-server/sysmond____/g' sysmond || true
+          perl -pi -e 's/frida-agent/sysmond-agent/g' sysmond || true
 
           chmod 755 sysmond
 
-          # ===== 精简（双保险）=====
-          strip -S sysmond || true
-          strip -x sysmond || true
+          ldid -e "$SERVER" > ents.xml 2>/dev/null || true
 
-          # ===== 检测残留 =====
-          echo "==== check ===="
-          file sysmond || true
-          strings sysmond | head -n 5 || true
-          strings sysmond | grep -i frida || true
+          if [ -s ents.xml ]; then
+            ldid -Sents.xml sysmond
+          else
+            ldid -S sysmond
+          fi
 
-      # ===== 打包 =====
+          ldid -e sysmond >/dev/null || { echo "❌ 签名失败"; exit 1; }
+
+      # ===== 5. 打包 =====
       - name: 打包
         run: |
           cd frida_src
@@ -72,7 +86,8 @@ jobs:
           # ---------- rootful ----------
           rm -rf pkg_rf
           mkdir -p pkg_rf/DEBIAN pkg_rf/usr/bin
-          cp sysmond pkg_rf/usr/bin/sysmond
+
+          install -m 755 sysmond pkg_rf/usr/bin/sysmond
 
           cat > pkg_rf/DEBIAN/control <<EOF
           Package: re.core.server
@@ -85,12 +100,13 @@ jobs:
           Depends: firmware (>= 12.0)
           EOF
 
-          dpkg-deb -b pkg_rf frida-rootful.deb
+          dpkg-deb -b pkg_rf frida-rootfularm.deb
 
           # ---------- rootless ----------
           rm -rf pkg_rl
           mkdir -p pkg_rl/DEBIAN pkg_rl/var/jb/usr/bin
-          cp sysmond pkg_rl/var/jb/usr/bin/sysmond
+
+          install -m 755 sysmond pkg_rl/var/jb/usr/bin/sysmond
 
           cat > pkg_rl/DEBIAN/control <<EOF
           Package: re.core.server
@@ -103,9 +119,12 @@ jobs:
           Depends: firmware (>= 15.0)
           EOF
 
-          dpkg-deb -b pkg_rl frida-rootless.deb
+          dpkg-deb -b pkg_rl frida-rootlessarm64.deb
 
-      # ===== 上传 =====
+          # 校验产物
+          ls -lh *.deb
+
+      # ===== 6. 上传 =====
       - name: 上传
         uses: actions/upload-artifact@v4
         with:
