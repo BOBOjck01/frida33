@@ -28,16 +28,8 @@ jobs:
 
           # 关闭 gumjs debug
           sed -i '' "s/debug: true/debug: false/g" subprojects/frida-gum/bindings/gumjs/meson.build || true
-
-          # 修改默认端口（避免 27042 被扫）
-          sed -i '' 's/27042/39042/g' subprojects/frida-core/lib/base/socket.vala || true
-          # ===== 进程名伪装 =====
-          sed -i '' 's/frida-server/sysmond/g' subprojects/frida-core/server/server.vala || true
-
-          # ===== 去掉明显日志 =====
-          sed -i '' 's/Listening on/Service started/g' subprojects/frida-core/server/server.vala || true
-
           sed -i '' 's/"frida-server"/"sysmond"/g' subprojects/frida-core/server/server.vala || true
+          sed -i '' 's/Listening on/Service started/g' subprojects/frida-core/server/server.vala || true
 
       - name: 编译
         run: |
@@ -75,10 +67,6 @@ jobs:
           # 安全 strip
           strip -x sysmond
           strip -ur sysmond
-          # ===== 只做安全字符串打断 =====
-          perl -0777 -pi -e 's/frida/fri\x00da/g' sysmond
-          perl -0777 -pi -e 's/gum-js-loop/gum-js-loo\x00p/g' sysmond
-          perl -0777 -pi -e 's/gmain/gma\x00in/g' sysmond  
 
           # 权限
           echo '<?xml version="1.0" encoding="UTF-8"?>
