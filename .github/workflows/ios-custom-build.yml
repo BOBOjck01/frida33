@@ -34,14 +34,23 @@ jobs:
           grep -rlZ "27042" . | xargs -0 -I {} sed -i '' 's/27042/39042/g' "{}" || true
           grep -rlZ "27043" . | xargs -0 -I {} sed -i '' 's/27043/39043/g' "{}" || true
           grep -rlZ "re\.frida\.server" . | xargs -0 -I {} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
+          grep -rlZ "FridaAgent" . | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
 
 
       - name: JS runtime 去特征
         run: |
           cd frida_src
-          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/frida\//core\//g' || true
+          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/Frida/Core/g' || true
+          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/frida/core/g' || true
           find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
+          sed -i '' 's/--sourcemap//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
+          sed -i '' 's/--debug//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
 
+      - name: 删除缓存 
+        run: |
+          rm -rf build
+          rm -rf subprojects/frida-gum/node_modules
+          
       # ===== 3. 配置 & 编译 =====
       - name: 编译 Frida Server
         env:
@@ -55,7 +64,10 @@ jobs:
             --enable-server \
             --disable-gadget \
             --disable-frida-python \
-            --disable-frida-tools
+            --disable-frida-tools \
+            -- \
+            -Dbuildtype=release \
+            -Db_ndebug=true
 
           ninja -C build -j$(sysctl -n hw.ncpu) || { echo "❌ 编译失败"; exit 1; }
 
