@@ -44,7 +44,8 @@ jobs:
           sed -i '' 's/--debug//g' "$FILE" || true
           # 2. 如果有 --sourcemap → 替换
           sed -i '' 's/--sourcemap/--no-source-maps/g' "$FILE" || true
-        
+          # 🔥 关键：强制修改 frida-compile 调用
+          sed -i '' '0,/frida-compile/s//frida-compile --no-source-maps/' "$FILE"
 
 
       - name: 删除缓存 
