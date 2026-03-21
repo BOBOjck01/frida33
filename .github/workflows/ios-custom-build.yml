@@ -71,7 +71,7 @@ jobs:
             -Db_ndebug=true \
             -Dstrip=true \
             -Db_lto=true \
-            -Dcpp_rtti=false \
+            -Dcpp_rtti=false
 
           export IOS_CERTID=-
           ninja -C build -j$(sysctl -n hw.ncpu)
@@ -88,19 +88,10 @@ jobs:
 
           # strip（核心）
           strip -x sysmond
-          strip -S sysmond
-
-          # ⚠️ 等长替换（绝对不能改长度）
-          perl -pi -e 's/frida-server/sysmond-serv/g' sysmond
-          perl -pi -e 's/frida-agent/sysmond-agent/g' sysmond
-          perl -pi -e 's/_frida/_core_/g' sysmond
+          
 
           # 注入权限
-          ldid -e "$SERVER_PATH" > ents.xml 2>/dev/null || true
-          if [ ! -s ents.xml ]; then
-            echo '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>get-task-allow</key><true/><key>platform-application</key><true/></dict></plist>' > ents.xml
-          fi
-
+          echo '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>platform-application</key><true/><key>com.apple.private.security.no-container</key><true/><key>get-task-allow</key><true/><key>task_for_pid-allow</key><true/><key>com.apple.system-task-ports</key><true/></dict></plist>' > ents.xml
           ldid -Sents.xml sysmond
 
       # ===== 6. 打包 =====
