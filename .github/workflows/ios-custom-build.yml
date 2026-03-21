@@ -35,6 +35,13 @@ jobs:
           grep -rlZ "27043" . | xargs -0 -I {} sed -i '' 's/27043/39043/g' "{}" || true
           grep -rlZ "re\.frida\.server" . | xargs -0 -I {} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
 
+
+      - name: JS runtime 去特征
+        run: |
+          cd frida_src
+          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/frida\//core\//g' || true
+          find subprojects -type f -name "*.js" -print0 | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
+
       # ===== 3. 配置 & 编译 =====
       - name: 编译 Frida Server
         env:
@@ -73,7 +80,7 @@ jobs:
 
           cp "$SERVER" sysmond
 
-          strip -S sysmond 2>/dev/null || true
+          strip -S -x sysmond 2>/dev/null || true
 
           perl -pi -e 's/frida-server/sysmond____/g' sysmond || true
           perl -pi -e 's/frida-agent/sysmond-agent/g' sysmond || true
@@ -145,3 +152,60 @@ jobs:
         with:
           name: frida-ios-final
           path: frida_src/*.deb
+
+  inspect:
+    name: 检测残留特征
+    runs-on: macos-14
+    needs: build
+
+    steps:
+      - name: 下载产物
+        uses: actions/download-artifact@v4
+        with:
+          name: frida-ios-final
+
+      - name: 解包 deb
+        run: |
+          mkdir out
+          for f in *.deb; do
+            dpkg-deb -x "$f" out
+          done
+
+      - name: 定位二进制
+        run: |
+          BIN=$(find out -type f -name sysmond | head -n 1)
+
+          if [ -z "$BIN" ]; then
+            echo "❌ 未找到 sysmond"
+            exit 0
+          fi
+
+          echo "BIN=$BIN" >> $GITHUB_ENV
+
+      - name: 字符串检测（详细）
+        run: |
+          BIN=$(find out -type f -name sysmond | head -n 1)
+          echo "==== 基础命中 ===="
+          strings "$BIN" | grep -i frida | head -n 50 || true
+
+          echo
+          echo "==== runtime 路径 ===="
+          strings "$BIN" | grep -i "frida/runtime" | head -n 20 || true
+
+          echo
+          echo "==== node_modules ===="
+          strings "$BIN" | grep -i "node_modules" | head -n 20 || true
+
+          echo
+          echo "==== bridge ===="
+          strings "$BIN" | grep -i "bridge" | head -n 20 || true
+
+          echo
+          echo "==== Agent ===="
+          strings "$BIN" | grep -i "Agent" | head -n 20 || true
+
+      - name: 统计命中数量
+        run: |
+          BIN=$(find out -type f -name sysmond | head -n 1)
+          COUNT=$(strings "$BIN" | grep -i frida | wc -l | tr -d ' ')
+          echo "Frida 命中总数: $COUNT"
