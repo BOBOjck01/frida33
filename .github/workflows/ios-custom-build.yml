@@ -1,13 +1,13 @@
-name: 彻底替换仓库为 Frida 16.6.6 源码
+name: 彻底物理同步 Frida 16.6.6 源码
 
 on:
   workflow_dispatch: # 手动触发
 
 jobs:
-  replace:
+  physical_sync:
     runs-on: ubuntu-latest
 
-    # 必须开启写入权限，否则无法推送到仓库
+    # 开启写入权限
     permissions:
       contents: write
 
@@ -20,44 +20,47 @@ jobs:
       - name: 2. 清空当前目录 (保留 .git)
         shell: bash
         run: |
-          # 开启扩展匹配模式
           shopt -s extglob dotglob
-          # 删除除了 .git 以外的所有文件和文件夹
+          # 删除除 .git 以外的所有内容，确保底座干净
           rm -rf !(.git)
 
-      - name: 3. 拉取 Frida 16.6.6 核心源码
+      - name: 3. 拉取 Frida 官方源码
         run: |
-          # 克隆指定版本，深度为 1 以加快速度
+          # 克隆指定版本 16.6.6
           git clone --depth 1 --branch 16.6.6 https://github.com/frida/frida.git tmp_frida
 
-      - name: 4. 同步关键子模块 (如果不执行此步，源码目录将是空的)
+      - name: 4. 强制同步子模块源码 (物理化第一步)
         run: |
           cd tmp_frida
-          # 只同步编译 iOS 必须的子模块，节省时间和空间
+          # 同步编译 iOS 必须的物理源码
           git submodule update --init --recursive --depth 1 releng
           git submodule update --init --recursive --depth 1 subprojects/frida-gum
           git submodule update --init --recursive --depth 1 subprojects/frida-core
 
-      - name: 5. 覆盖文件并清理
+      - name: 5. 覆盖并执行物理脱钩 (核心修复)
         shell: bash
         run: |
           shopt -s dotglob
-          # 将所有内容（包括隐藏文件）移出
+          # A. 将所有源码物理拷贝到当前目录
           cp -R tmp_frida/* .
-          # 清理临时目录和 Frida 自带的 git 配置
-          rm -rf tmp_frida
-          rm -rf .github
-          rm -rf .gitmodules || true
+          
+          # B. 【关键】删除所有子目录下的 .git 隐藏索引文件
+          # 这一步如果不做，GitHub 就会显示灰色空文件夹
+          find . -name ".git" -not -path "./.git" -exec rm -rf {} + || true
+          
+          # C. 清理不需要的临时文件和配置
+          rm -rf tmp_frida .github .gitmodules || true
 
-      - name: 6. 提交并推送
+      - name: 6. 提交并推送至新仓库
+        env:
+          G_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # 强制添加所有文件
+          # 强制添加所有物理文件
           git add -A
-          git commit -m "chore: replace repository with frida 16.6.6 full source" || echo "No changes to commit"
+          git commit -m "feat: complete physical source migration 16.6.6" || echo "no changes"
           
-          # 使用内置的 GITHUB_TOKEN 进行身份验证并推送
-          # 注意：如果你的主分支名是 master，请将下面的 main 改为 master
-          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main --force
+          # 推送到你当前仓库的 main 分支 (如果是 master 请自行修改)
+          git push "https://x-access-token:${G_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main --force
