@@ -98,7 +98,7 @@ jobs:
 
           cp "$SERVER" sysmond
 
-          strip -S -x sysmond 2>/dev/null || true
+          strip -s sysmond
           # ===== 1. 删 sourcemap =====
           # 只改路径字符串，不动 require
           perl -pi -e 's#/_frida\.js#/_core.js#g' sysmond
