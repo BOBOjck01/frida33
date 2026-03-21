@@ -44,9 +44,7 @@ jobs:
           sed -i '' 's/--debug//g' "$FILE" || true
           # 2. 如果有 --sourcemap → 替换
           sed -i '' 's/--sourcemap/--no-source-maps/g' "$FILE" || true
-          # 3. 如果完全没有 → 强插
-          grep -q -- '--no-source-maps' "$FILE" || \
-          echo "frida_compile += ['--no-source-maps']" >> "$FILE"
+        
 
 
       - name: 删除缓存 
