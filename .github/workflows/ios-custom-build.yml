@@ -9,7 +9,6 @@ jobs:
 
     env:
       FRIDA_VERSION: "16.6.6"
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       # ===== 1. 环境准备 & 源码拉取 =====
@@ -36,12 +35,22 @@ jobs:
           grep -rlZ "re\.frida\.server" . | xargs -0 -I {} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
           grep -rlZ "FridaAgent" . | xargs -0 sed -i '' 's/FridaAgent/CoreAgent/g' || true
 
-
-      - name: JS runtime 去特征
+      - name: JS runtime 去特征（正确版）
         run: |
           cd frida_src
-          sed -i '' 's/--sourcemap//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
-          sed -i '' 's/--debug//g' subprojects/frida-gum/bindings/gumjs/meson.build || true
+
+          FILE=subprojects/frida-gum/bindings/gumjs/meson.build
+
+          # 1. 删除 debug
+          sed -i '' 's/--debug//g' "$FILE" || true
+
+          # 2. 如果有 --sourcemap → 替换
+          sed -i '' 's/--sourcemap/--no-source-maps/g' "$FILE" || true
+
+          # 3. 如果完全没有 → 强插
+          grep -q -- '--no-source-maps' "$FILE" || \
+          sed -i '' "s/'-c',/'-c',\n  '--no-source-maps',/g" "$FILE"
+
 
       - name: 删除缓存 
         run: |
