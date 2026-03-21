@@ -21,11 +21,15 @@ jobs:
           cd frida_src
           git submodule update --init --recursive
 
-      # ===== 2. 源码级去特征 =====
       - name: 源码级去特征
         run: |
-          cd frida_src/frida-core
-
+          cd frida_src
+        
+          CORE_DIR=$(find . -type d -name frida-core | head -n 1)
+          if [ -z "$CORE_DIR" ]; then echo "❌ frida-core not found"; exit 1; fi
+        
+          cd "$CORE_DIR"
+        
           grep -rl "27042" . | xargs -r sed -i '' 's/27042/39042/g' || true
           grep -rl "27043" . | xargs -r sed -i '' 's/27043/39043/g' || true
           grep -rl "re\.frida\.server" . | xargs -r sed -i '' 's/re.frida.server/re.core.server/g' || true
