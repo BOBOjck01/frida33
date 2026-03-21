@@ -1,13 +1,12 @@
-name: 彻底物理同步 Frida 16.6.6 源码
+name: 彻底替换仓库为 Frida 16.6.6 源码（稳定版）
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch:
 
 jobs:
-  physical_sync:
+  replace:
     runs-on: ubuntu-latest
 
-    # 开启写入权限
     permissions:
       contents: write
 
@@ -17,50 +16,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 2. 清空当前目录 (保留 .git)
-        shell: bash
+      - name: 2. 拉取 Frida 16.6.6 源码
         run: |
-          shopt -s extglob dotglob
-          # 删除除 .git 以外的所有内容，确保底座干净
-          rm -rf !(.git)
-
-      - name: 3. 拉取 Frida 官方源码
-        run: |
-          # 克隆指定版本 16.6.6
           git clone --depth 1 --branch 16.6.6 https://github.com/frida/frida.git tmp_frida
-
-      - name: 4. 强制同步子模块源码 (物理化第一步)
-        run: |
           cd tmp_frida
-          # 同步编译 iOS 必须的物理源码
-          git submodule update --init --recursive --depth 1 releng
-          git submodule update --init --recursive --depth 1 subprojects/frida-gum
-          git submodule update --init --recursive --depth 1 subprojects/frida-core
+          git submodule update --init --recursive --depth 1
 
-      - name: 5. 覆盖并执行物理脱钩 (核心修复)
-        shell: bash
+      - name: 3. 用 Frida 内容重建仓库（关键步骤）
         run: |
-          shopt -s dotglob
-          # A. 将所有源码物理拷贝到当前目录
-          cp -R tmp_frida/* .
-          
-          # B. 【关键】删除所有子目录下的 .git 隐藏索引文件
-          # 这一步如果不做，GitHub 就会显示灰色空文件夹
-          find . -name ".git" -not -path "./.git" -exec rm -rf {} + || true
-          
-          # C. 清理不需要的临时文件和配置
-          rm -rf tmp_frida .github .gitmodules || true
+          # 删除当前所有文件（包括历史索引）
+          rm -rf * .[^.]* || true
 
-      - name: 6. 提交并推送至新仓库
-        env:
-          G_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 拷贝源码
+          rsync -a tmp_frida/ .
+
+          # 删除临时目录
+          rm -rf tmp_frida
+
+      - name: 4. 重建干净分支（避免 pack 错误）
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          
-          # 强制添加所有物理文件
+          git checkout --orphan new-main
           git add -A
-          git commit -m "feat: complete physical source migration 16.6.6" || echo "no changes"
-          
-          # 推送到你当前仓库的 main 分支 (如果是 master 请自行修改)
-          git push "https://x-access-token:${G_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main --force
+          git commit -m "chore: replace repository with frida 16.6.6 full source"
+
+      - name: 5. 强推覆盖 main
+        run: |
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" new-main:refs/heads/main --force
