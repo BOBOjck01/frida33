@@ -11,21 +11,15 @@ jobs:
       FRIDA_VERSION: "16.6.6"
 
     steps:
-      # ===== 环境 =====
-      - name: 安装依赖
-        run: |
-          brew install dpkg python || true
-
-      # ===== 拉源码（稳定写法）=====
+      # ===== 拉源码 =====
       - name: 拉取源码
         run: |
-          git clone https://github.com/frida/frida.git frida_src
+          brew install dpkg
+          git clone --depth 1 --branch $FRIDA_VERSION https://github.com/frida/frida.git frida_src
           cd frida_src
-          git fetch --tags
-          git checkout $FRIDA_VERSION
           git submodule update --init --recursive
 
-      # ===== 编译 =====
+      # ===== 配置 & 编译 =====
       - name: 编译
         env:
           IOS_CERTID: "-"
@@ -38,73 +32,35 @@ jobs:
             --disable-gadget \
             --disable-frida-python \
             --disable-frida-tools
-
-          ninja -C build -j$(sysctl -n hw.ncpu)
+          ninja -C build
 
       # ===== 二进制处理 =====
       - name: 去特征
         run: |
           cd frida_src
 
-          SERVER=$(find build -type f -name frida-server | head -n 1)
-          [ -z "$SERVER" ] && echo "❌ no server" && exit 1
-
+          SERVER=$(find build -name frida-server | head -n 1)
           cp "$SERVER" sysmond
 
-          echo "==== BEFORE ===="
-          file sysmond
+          # ===== 等长替换（核心）=====
+          perl -pi -e 's/frida-server/sysmond____/g' sysmond
+          perl -pi -e 's/re\.frida\.server/re.core.server_/g' sysmond
+          
 
-          # ===== 更稳的 cstring 获取 =====
-          OFFSET=$(otool -l sysmond | awk '
-            $1=="sectname" && $2=="__cstring"{f=1}
-            f && $1=="offset"{print $2; exit}
-          ')
-          SIZE=$(otool -l sysmond | awk '
-            $1=="sectname" && $2=="__cstring"{f=1}
-            f && $1=="size"{print $2; exit}
-          ')
-
-          [ -z "$OFFSET" ] && echo "❌ no offset" && exit 1
-          [ -z "$SIZE" ] && echo "❌ no size" && exit 1
-
-          # ===== Python patch =====
-          python3 <<PY
-import sys
-
-path = "sysmond"
-offset = int("$OFFSET")
-size = int("$SIZE")
-
-data = bytearray(open(path,"rb").read())
-seg = data[offset:offset+size]
-
-def replace(old, new):
-    if len(old)!=len(new):
-        raise SystemExit("len mismatch")
-    i=0
-    c=0
-    while True:
-        j=seg.find(old, i)
-        if j==-1: break
-        seg[j:j+len(old)] = new
-        i=j+len(old)
-        c+=1
-    print(old, "->", new, "count=", c)
-
-replace(b"frida-server", b"sysmond____")
-replace(b"re.frida.server", b"re.core.server_")
-
-data[offset:offset+size] = seg
-open(path,"wb").write(data)
-
-print("patch done")
-PY
+          # ===== 端口（可选）=====
+          perl -pi -e 's/27042/39042/g' sysmond
+          perl -pi -e 's/27043/39043/g' sysmond
 
           chmod 755 sysmond
-          strip -S sysmond || true
 
-          echo "==== AFTER ===="
-          file sysmond
+          # ===== 精简（双保险）=====
+          strip -S sysmond || true
+          strip -x sysmond || true
+
+          # ===== 检测残留 =====
+          echo "==== check ===="
+          file sysmond || true
+          strings sysmond | head -n 5 || true
           strings sysmond | grep -i frida || true
 
       # ===== 打包 =====
@@ -113,32 +69,38 @@ PY
           cd frida_src
           V=${{ env.FRIDA_VERSION }}
 
-          # rootful
+          # ---------- rootful ----------
           rm -rf pkg_rf
           mkdir -p pkg_rf/DEBIAN pkg_rf/usr/bin
           cp sysmond pkg_rf/usr/bin/sysmond
 
           cat > pkg_rf/DEBIAN/control <<EOF
           Package: re.core.server
+          Name: sysmond
           Version: $V
           Architecture: iphoneos-arm
           Description: system service
           Maintainer: root
+          Section: System
+          Depends: firmware (>= 12.0)
           EOF
 
           dpkg-deb -b pkg_rf frida-rootful.deb
 
-          # rootless
+          # ---------- rootless ----------
           rm -rf pkg_rl
           mkdir -p pkg_rl/DEBIAN pkg_rl/var/jb/usr/bin
           cp sysmond pkg_rl/var/jb/usr/bin/sysmond
 
           cat > pkg_rl/DEBIAN/control <<EOF
           Package: re.core.server
+          Name: sysmond
           Version: $V
           Architecture: iphoneos-arm64
           Description: system service
           Maintainer: root
+          Section: System
+          Depends: firmware (>= 15.0)
           EOF
 
           dpkg-deb -b pkg_rl frida-rootless.deb
@@ -147,5 +109,5 @@ PY
       - name: 上传
         uses: actions/upload-artifact@v4
         with:
-          name: frida-ios-${{ env.FRIDA_VERSION }}
+          name: frida-ios-final
           path: frida_src/*.deb
