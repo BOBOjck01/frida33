@@ -90,21 +90,23 @@ jobs:
 
           # 2. 使用更稳健的方式查找二进制文件
           # 注意：ios-arm64 编译产物可能在 build/subprojects/frida-core/server/ 等深层目录下
-          SERVER_PATH=$(find build -name "frida-server*" -type f -perm +111 | head -n 1)
+          SERVER_PATH=$(find build -type f -perm -111 | grep -i frida-server | head -n 1)
+          echo "SERVER=$SERVER_PATH"
 
-          if [ -z "$SERVER_PATH" ]; then
-            echo "❌ 严重错误：未能在 build 目录下找到可执行的 frida-server"
+          if [ -z "$SERVER_PATH" ] || [ ! -f "$SERVER_PATH" ]; then
+            echo "❌ 未找到可执行 frida-server"
+            find build -type f | grep -i server | head -n 20
             exit 1
           fi
 
           echo "✅ 找到产物：$SERVER_PATH"
 
           # 3. 复制并重命名
-          cp "$SERVER_PATH" sysmond
+          cp "$SERVER_PATH" sysmond || exit 1
 
           # 4. 执行 strip
           strip -s sysmond || { echo "❌ strip 失败"; exit 1; }
-          
+
           # ===== 1. 删 sourcemap =====
           # 只改路径字符串，不动 require
           perl -pi -e 's#/_frida\.js#/_core.js#g' sysmond
@@ -117,7 +119,7 @@ jobs:
 
           chmod 755 sysmond
 
-          ldid -e "$SERVER" > ents.xml 2>/dev/null || true
+          ldid -e "$SERVER_PATH" > ents.xml 2>/dev/null || true
 
           if [ -s ents.xml ]; then
             ldid -Sents.xml sysmond
