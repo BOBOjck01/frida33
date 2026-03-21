@@ -9,6 +9,7 @@ jobs:
 
     env:
       FRIDA_VERSION: "16.6.6"
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       # ===== 1. 环境准备 & 源码拉取 =====
@@ -30,9 +31,9 @@ jobs:
         
           cd "$CORE_DIR"
         
-          grep -rl "27042" . | xargs -r sed -i '' 's/27042/39042/g' || true
-          grep -rl "27043" . | xargs -r sed -i '' 's/27043/39043/g' || true
-          grep -rl "re\.frida\.server" . | xargs -r sed -i '' 's/re.frida.server/re.core.server/g' || true
+          grep -rlZ "27042" . | xargs -0 -I {} sed -i '' 's/27042/39042/g' "{}" || true
+          grep -rlZ "27043" . | xargs -0 -I {} sed -i '' 's/27043/39043/g' "{}" || true
+          grep -rlZ "re\.frida\.server" . | xargs -0 -I {} sed -i '' 's/re.frida.server/re.core.server/g' "{}" || true
 
       # ===== 3. 配置 & 编译 =====
       - name: 编译 Frida Server
@@ -49,25 +50,34 @@ jobs:
             --disable-frida-python \
             --disable-frida-tools
 
-          ninja -C build -j$(sysctl -n hw.ncpu)
+          ninja -C build -j$(sysctl -n hw.ncpu) || { echo "❌ 编译失败"; exit 1; }
 
           # 基本校验
-          find build -name frida-server | grep -q . || { echo "❌ 编译失败"; exit 1; }
+          test -x "$(find build -type f -name 'frida-server*' | head -n 1)" || { echo "❌ 编译产物不可执行"; exit 1; }
 
       # ===== 4. 二进制处理 & 重签名 =====
       - name: 二进制处理与重签名
         run: |
           cd frida_src
 
-          SERVER=$(find build -type f -name frida-server | head -n 1)
-          if [ -z "$SERVER" ]; then echo "❌ 未找到编译产物"; exit 1; fi
+          SERVER=$(find build -type f -path "*/frida-core/*/server/*" -name "frida-server*" | head -n 1)
+
+          if [ -z "$SERVER" ]; then
+            SERVER=$(find build -type f -name "frida-server*" | head -n 1)
+          fi
+
+          if [ -z "$SERVER" ]; then
+            echo "❌ 未找到编译产物"
+            exit 1
+          fi
 
           cp "$SERVER" sysmond
 
-          strip -S sysmond || true
+          strip -S sysmond 2>/dev/null || true
 
           perl -pi -e 's/frida-server/sysmond____/g' sysmond || true
           perl -pi -e 's/frida-agent/sysmond-agent/g' sysmond || true
+          perl -pi -e 's/re\.frida\.server/re.core.server/g' sysmond || true
 
           chmod 755 sysmond
 
@@ -79,8 +89,9 @@ jobs:
             ldid -S sysmond
           fi
 
-          ldid -e sysmond >/dev/null || { echo "❌ 签名失败"; exit 1; }
-
+          ldid -e sysmond >/dev/null 2>&1 || { echo "❌ 签名失败"; exit 1; }
+          echo "==== residual check ===="
+          strings sysmond | grep -i frida && echo "⚠️ still contains frida"
       # ===== 5. 打包 =====
       - name: 打包
         run: |
